@@ -15,9 +15,16 @@ description: Please see the README on GitHub at <https://github.com/ejconlon/buh
 
 dependencies:
 - base >= 4.12 && < 5
+- async
 - brick
 - containers
+- directory
+- hashable
+- microlens
 - text
+- text-builder
+- text-zipper
+- unordered-containers
 - vty
 
 default-extensions:
