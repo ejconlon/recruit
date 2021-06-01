@@ -15,6 +15,10 @@ description: Please see the README on GitHub at <https://github.com/ejconlon/buh
 
 dependencies:
 - base >= 4.12 && < 5
+- brick
+- containers
+- text
+- vty
 
 default-extensions:
 - BangPatterns
