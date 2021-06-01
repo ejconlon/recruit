@@ -8,17 +8,17 @@ https://hackage.haskell.org/package/brick-0.62/docs/Brick-Main.html#t:App
 -}
 module Buh where
 
-import Brick (App (..), BrickEvent (..), CursorLocation, EventM, Next, ViewportType (..), Widget, attrMap,
-              continue, customMain, getVtyHandle, halt, showCursorNamed, txt, vBox, viewport, vLimit)
+import Brick (App (..), BrickEvent (..), CursorLocation, EventM, Next, ViewportType (..), Widget, attrMap, continue,
+              customMain, getVtyHandle, halt, showCursorNamed, txt, vBox, vLimit, viewport)
 import Brick.BChan (BChan, newBChan, readBChan, writeBChan)
 import Brick.Widgets.Border (hBorder)
 import Control.Concurrent.Async (race)
 import Control.Monad (forever, when)
 import Control.Monad.IO.Class (MonadIO (..))
-import qualified Graphics.Vty as V
 import Data.Either (isLeft)
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef', writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intersperse)
+import qualified Graphics.Vty as V
 -- import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
