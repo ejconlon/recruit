@@ -5,3 +5,6 @@ ghc-options:
 
 packages:
 - .
+
+extra-deps:
+- little-logger-0.3.2

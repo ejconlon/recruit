@@ -3,7 +3,14 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    hackage: little-logger-0.3.2@sha256:d43c8bd581a267061bbff9a1ca4edbe5ea10a985b92140e653f5259621171ba3,2184
+    pantry-tree:
+      size: 518
+      sha256: 9348cf53abb66ed580bccd9b1a2fbda14ee39b7041e1a4a7b77bb3463dc4e3b1
+  original:
+    hackage: little-logger-0.3.2
 snapshots:
 - completed:
     size: 567677

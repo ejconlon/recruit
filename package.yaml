@@ -17,14 +17,16 @@ dependencies:
 - base >= 4.12 && < 5
 - async
 - brick
-- containers
+# - containers
+# - cursor-brick
 - directory
-- hashable
-- microlens
+- little-logger >= 0.3.2 && < 0.4
+# - hashable
+# - microlens
 - text
-- text-builder
+# - text-builder
 - text-zipper
-- unordered-containers
+# - unordered-containers
 - vty
 
 default-extensions:
