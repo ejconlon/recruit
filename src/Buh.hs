@@ -144,11 +144,9 @@ renderEditor st =
         (row, col) = Z.cursorPosition z
         toLeft = T.take col (Z.currentLine z)
         cursorLoc = Location (textWidth toLeft, row)
-        limit = maybe id vLimit (Z.getLineLimit z)
         atChar = charAtCursor z
         atCharWidth = maybe 1 textWidth atChar
     in withAttr plainOffAttr $
-       limit $
        viewport NameEditor Both $
        (if foc then showCursor NameEditor cursorLoc else id) $
        visibleRegion cursorLoc (atCharWidth, 1) $
