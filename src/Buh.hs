@@ -27,7 +27,7 @@ import LittleLogger.Manual (SimpleLogAction, fileSimpleLogAction, logDebug)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Text.Zipper (TextZipper)
+import Data.Text.Zipper (TextZipper, currentLine)
 import qualified Data.Text.Zipper as Z
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
@@ -136,7 +136,12 @@ stacked widgets = [vBox (intersperse hBorder widgets)]
 -- TODO there should be a way to cache this...
 -- (And support tab width > 1)
 saniTxt :: Text -> Widget Name
-saniTxt t = txt (if T.any (== '\t') t then T.map (\c -> if c == '\t' then ' ' else c) t else t)
+saniTxt t = txt $
+  if T.null t
+    then " "
+    else if T.any (== '\t') t
+      then T.map (\c -> if c == '\t' then ' ' else c) t
+      else t
 
 charAtCursor :: TextZipper Text -> Maybe Text
 charAtCursor z =
@@ -146,6 +151,19 @@ charAtCursor z =
     in if T.length toRight > 0
        then Just (T.take 1 toRight)
        else Nothing
+
+previewEditor :: MonadIO m => SimpleLogAction -> IORef St -> m ()
+previewEditor action ref = do
+  st <- liftIO (readIORef ref)
+  let z = stEditorContents st
+      emo = stEdMode st
+      foc = emo /= EdModeCommand
+      (row, col) = Z.cursorPosition z
+      toLeft = T.take col (Z.currentLine z)
+      cursorLoc = Location (textWidth toLeft, row)
+      atChar = charAtCursor z
+      atCharWidth = maybe 1 textWidth atChar
+  logDebug action (T.intercalate " " (fmap T.pack ["EDITOR", show emo, show foc, show row, show col, show toLeft, show cursorLoc, show atChar, show atCharWidth]))
 
 renderEditor :: St -> [Widget Name]
 renderEditor st =
@@ -182,7 +200,7 @@ renderCommand st =
         atCharWidth = maybe 1 textWidth atChar
         innerWidget =
           withAttr plainOffAttr $
-            viewport NameCommand Both $
+            viewport NameCommand Horizontal $
             (if foc then showCursor NameCommand cursorLoc else id) $
             visibleRegion cursorLoc (atCharWidth, 1) $
             vBox . fmap saniTxt $
@@ -265,11 +283,28 @@ editContents ref f = liftIO (modifyIORef' ref (\st -> st { stEditorContents = f 
 editCommand :: MonadIO m => IORef St -> (TextZipper Text -> TextZipper Text) -> m ()
 editCommand ref f = liftIO (modifyIORef' ref (\st -> st { stCommandLine = f (stCommandLine st) }))
 
-data Clear = ClearYes | ClearNo deriving (Eq, Show)
+processCommand :: MonadIO m => IORef St -> m NextOp
+processCommand ref = do
+  comLine <- getsSt ref (currentLine . stCommandLine)
+  op <- case T.words comLine of
+    ["top"] -> editContents ref Z.gotoBOF $> NextOpContinue
+    ["bottom"] -> editContents ref Z.gotoEOF $> NextOpContinue
+    ["quit"] -> pure NextOpHalt
+    _ -> writeStatus ref ("Bad command: " <> comLine) $> NextOpContinue
+  setEdMode ref EdModeNormal
+  pure op
 
-myHandle :: BChan Req -> St -> BrickEvent Name Ev -> EventM Name (Next St)
-myHandle _ st e = withNextSt st $ \ref -> do
-  case e of
+data Clear = ClearYes | ClearNo | ClearQuit deriving (Eq, Show)
+
+opToClear :: NextOp -> Clear
+opToClear op =
+  case op of
+    NextOpContinue -> ClearNo
+    NextOpHalt -> ClearQuit
+
+myHandle :: SimpleLogAction -> BChan Req -> St -> BrickEvent Name Ev -> EventM Name (Next St)
+myHandle action _ st e = withNextSt st $ \ref -> do
+  n <- case e of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
     VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl]) -> pure NextOpHalt
@@ -352,11 +387,12 @@ myHandle _ st e = withNextSt st $ \ref -> do
             (V.KChar 'd', [V.MCtrl]) -> editCommand ref Z.deleteChar $> ClearYes
             (V.KBS, []) -> editCommand ref Z.deletePrevChar $> ClearYes
             (V.KChar c, []) -> editCommand ref (Z.insertChar c) $> ClearYes
-            -- Sending command
-            -- TODO enter
+            (V.KEnter, []) -> fmap opToClear (processCommand ref)
             _ -> pure ClearNo
-      when (clear == ClearYes) (writeStatus ref "")
-      pure NextOpContinue
+      case clear of
+        ClearYes -> writeStatus ref "" $> NextOpContinue
+        ClearNo -> pure NextOpContinue
+        ClearQuit -> pure NextOpHalt
     -- Handle worker events
     AppEvent ev -> do
       case ev of
@@ -370,6 +406,9 @@ myHandle _ st e = withNextSt st $ \ref -> do
             ResBodyNotFound fp -> writeStatus ref ("File not found: " <> T.pack fp)
       pure NextOpContinue
     _ -> pure NextOpContinue
+  -- Debug editor positioning with this:
+  when False (previewEditor action ref)
+  pure n
 
 plainOnAttr :: AttrName
 plainOnAttr = "plain" <> "on"
@@ -384,10 +423,10 @@ myAttrMap = attrMap V.defAttr
   ]
 
 mkApp :: SimpleLogAction -> BChan Req -> Maybe FilePath -> App St Ev Name
-mkApp _ reqChan mfp = App
+mkApp action reqChan mfp = App
   { appDraw = myDraw
   , appChooseCursor = myChoose
-  , appHandleEvent = myHandle reqChan
+  , appHandleEvent = myHandle action reqChan
   , appStartEvent = myStart reqChan mfp
   , appAttrMap = const myAttrMap
   }
