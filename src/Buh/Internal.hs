@@ -16,12 +16,16 @@ import Brick.Util (on)
 import Brick.Widgets.Border (hBorder)
 import Buh.Log (Log, markLog, newLog, peekLog, pushLog)
 import Control.Concurrent.Async (race)
+import Control.Concurrent.STM (STM, atomically)
+import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO, stateTVar)
 import Control.Exception (SomeException, handle)
 import Control.Monad (forever, join, unless, when)
 import Control.Monad.IO.Class (MonadIO (..))
+import Data.Foldable (for_)
 import Data.Functor (($>))
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intersperse)
+import Data.Sequence (Seq (..))
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -114,9 +118,9 @@ charAtCursor z =
        then Just (T.take 1 toRight)
        else Nothing
 
-previewEditor :: MonadIO m => SimpleLogAction -> IORef St -> m ()
+previewEditor :: MonadIO m => SimpleLogAction -> TVar St -> m ()
 previewEditor action ref = do
-  st <- liftIO (readIORef ref)
+  st <- liftIO (readTVarIO ref)
   let z = stEditorContents st
       emo = stEdMode st
       foc = emo /= EdModeCommand
@@ -177,93 +181,48 @@ myDraw st = stacked (join [renderEditor st, renderStatus st, renderCommand st])
 myChoose :: St -> [CursorLocation Name] -> Maybe (CursorLocation Name)
 myChoose = showCursorNamed . stFocus
 
-sendReq :: MonadIO m => BChan (Req DemoReqBody) -> IORef St -> ReqBody DemoReqBody -> m ()
-sendReq reqChan ref reqb = do
-  st <- liftIO (readIORef ref)
+newReq :: TVar St -> ReqBody req -> STM (Req req)
+newReq ref reqb = stateTVar ref $ \st ->
   let n = stReqIndex st
       req = Req n reqb
       st' = st { stReqIndex = n + 1 }
-  liftIO (writeIORef ref st')
-  liftIO (writeBChan reqChan req)
+  in (req, st')
 
-writeStatus :: MonadIO m => IORef St -> Text -> m ()
-writeStatus ref line = liftIO (modifyIORef' ref (\st -> st { stStatusLog = pushLog (stStatusLog st) line }))
+writeStatus :: TVar St -> Text -> STM ()
+writeStatus ref line = modifyTVar' ref (\st -> st { stStatusLog = pushLog (stStatusLog st) line })
 
-clearStatus :: MonadIO m => IORef St -> m ()
-clearStatus ref = liftIO (modifyIORef' ref (\st -> st { stStatusLog = markLog (stStatusLog st) }))
+clearStatus :: TVar St -> STM ()
+clearStatus ref = modifyTVar' ref (\st -> st { stStatusLog = markLog (stStatusLog st) })
 
-setContents :: MonadIO m => IORef St -> Text -> m ()
-setContents ref contents = liftIO (modifyIORef' ref (\st -> st { stEditorContents = Z.textZipper (T.lines contents) Nothing }))
+setContents :: TVar St -> Text -> STM ()
+setContents ref contents = modifyTVar' ref (\st -> st { stEditorContents = Z.textZipper (T.lines contents) Nothing })
 
-runSt :: MonadIO m => St -> (IORef St -> m a) -> m (a, St)
-runSt st0 f = do
-  ref <- liftIO (newIORef st0)
-  a <- f ref
-  st1 <- liftIO (readIORef ref)
-  pure (a, st1)
-
-execSt :: MonadIO m => St -> (IORef St -> m ()) -> m St
-execSt st0 f = fmap snd (runSt st0 f)
-
-getsSt :: MonadIO m => IORef St -> (St -> a) -> m a
-getsSt ref f = liftIO (fmap f (readIORef ref))
-
-data NextOp = NextOpHalt | NextOpContinue
-  deriving (Eq, Show)
-
-withNextSt :: St -> (IORef St -> EventM n NextOp) -> EventM n (Next St)
-withNextSt st0 f = do
-  (op, st1) <- runSt st0 f
-  case op of
-    NextOpHalt -> halt st1
-    NextOpContinue -> continue st1
-
-myStart :: BChan (Req DemoReqBody) -> Maybe FilePath -> St -> EventM Name St
-myStart reqChan mfp st = do
-  vty <- getVtyHandle
-  let output = V.outputIface vty
-  -- Enable paste
-  when (V.supportsMode output V.BracketedPaste)
-    (liftIO (V.setMode output V.BracketedPaste True))
-  -- Enable mouse
-  when (V.supportsMode output V.Mouse)
-    (liftIO (V.setMode output V.Mouse True))
-  -- Send open file request
-  case mfp of
-    Nothing -> pure st
-    Just fp -> execSt st $ \ref -> do
-      writeStatus ref ("Opening " <> T.pack fp)
-      sendReq reqChan ref (ReqBodyOpen fp)
-
-setEdMode :: MonadIO m => IORef St -> EdMode -> m ()
+setEdMode :: TVar St -> EdMode -> STM ()
 setEdMode ref emo = do
-  liftIO $ modifyIORef' ref $ \st ->
+  modifyTVar' ref $ \st ->
     -- If moving away from command focus, clear command line
     let comLine = if emo /= EdModeCommand && stEdMode st == EdModeCommand then Z.textZipper [] Nothing else stCommandLine st
     in st { stEdMode = emo, stCommandLine = comLine }
   writeStatus ref (edModeText emo <> " mode")
 
-editContents :: MonadIO m => IORef St -> (TextZipper Text -> TextZipper Text) -> m ()
-editContents ref f = liftIO (modifyIORef' ref (\st -> st { stEditorContents = f (stEditorContents st) }))
+editContents :: TVar St -> (TextZipper Text -> TextZipper Text) -> STM ()
+editContents ref f = modifyTVar' ref (\st -> st { stEditorContents = f (stEditorContents st) })
 
-editCommand :: MonadIO m => IORef St -> (TextZipper Text -> TextZipper Text) -> m ()
-editCommand ref f = liftIO (modifyIORef' ref (\st -> st { stCommandLine = f (stCommandLine st) }))
+editCommand :: TVar St -> (TextZipper Text -> TextZipper Text) -> STM ()
+editCommand ref f = modifyTVar' ref (\st -> st { stCommandLine = f (stCommandLine st) })
 
-processCommand :: MonadIO m => SimpleLogAction -> BChan (Req DemoReqBody) -> IORef St -> m NextOp
-processCommand action reqChan ref = do
-  comLine <- getsSt ref (currentLine . stCommandLine)
-  logDebug action ("COMMAND: " <> comLine)
-  (op, ok) <- case T.words comLine of
-    [] -> pure (NextOpContinue, True)
-    ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
-    ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
-    ["quit"] -> pure (NextOpHalt, True)
-    ["ping"] -> sendReq reqChan ref (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
-    ["boom"] -> sendReq reqChan ref (ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
-    _ -> pure (NextOpContinue, False)
-  setEdMode ref EdModeNormal
-  unless ok (writeStatus ref ("Bad command: " <> comLine))
-  pure op
+data NextOp = NextOpHalt | NextOpContinue
+  deriving (Eq, Show)
+
+data UiSt req = UiSt
+  { uiStRef :: !(TVar St)
+  , uiStOutgoing :: !(TVar (Seq (Req req)))
+  }
+
+addOutgoing :: UiSt req -> ReqBody req -> STM ()
+addOutgoing (UiSt ref outgoing) rb = do
+  r <- newReq ref rb
+  modifyTVar' outgoing (:|> r)
 
 data Clear = ClearYes | ClearNo | ClearQuit deriving (Eq, Show)
 
@@ -273,15 +232,33 @@ opToClear op =
     NextOpContinue -> ClearNo
     NextOpHalt -> ClearQuit
 
-myHandle :: SimpleLogAction -> BChan (Req DemoReqBody) -> St -> BrickEvent Name (Res DemoResBody) -> EventM Name (Next St)
-myHandle action reqChan st e = withNextSt st $ \ref -> do
-  n <- case e of
+type CommandHandler req = UiSt req -> Text -> STM NextOp
+
+type EventHandler req res = CommandHandler req -> UiSt req -> BrickEvent Name (Res res) -> STM NextOp
+
+myCommandHandler :: CommandHandler DemoReqBody
+myCommandHandler uiSt@(UiSt ref _) cmd = do
+  (op, ok) <- case T.words cmd of
+    [] -> pure (NextOpContinue, True)
+    ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
+    ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
+    ["quit"] -> pure (NextOpHalt, True)
+    ["ping"] -> addOutgoing uiSt (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
+    ["boom"] -> addOutgoing uiSt(ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
+    _ -> pure (NextOpContinue, False)
+  setEdMode ref EdModeNormal
+  unless ok (writeStatus ref ("Bad command: " <> cmd))
+  pure op
+
+myEventHandler :: EventHandler DemoReqBody DemoResBody
+myEventHandler commandHandler uiSt@(UiSt ref _) ev =
+  case ev of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
     VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl]) -> pure NextOpHalt
     -- Handle rest of keyboard input
     VtyEvent (V.EvKey key mods) -> do
-      emo <- getsSt ref stEdMode
+      emo <- fmap stEdMode (readTVar ref)
       clear <- case emo of
         EdModeNormal ->
           case (key, mods) of
@@ -358,15 +335,17 @@ myHandle action reqChan st e = withNextSt st $ \ref -> do
             (V.KChar 'd', [V.MCtrl]) -> editCommand ref Z.deleteChar $> ClearYes
             (V.KBS, []) -> editCommand ref Z.deletePrevChar $> ClearYes
             (V.KChar c, []) -> editCommand ref (Z.insertChar c) $> ClearYes
-            (V.KEnter, []) -> fmap opToClear (processCommand action reqChan ref)
+            (V.KEnter, []) -> do
+              cmd <- fmap (currentLine . stCommandLine) (readTVar ref)
+              fmap opToClear (commandHandler uiSt cmd)
             _ -> pure ClearNo
       case clear of
         ClearYes -> clearStatus ref $> NextOpContinue
         ClearNo -> pure NextOpContinue
         ClearQuit -> pure NextOpHalt
     -- Handle worker events
-    AppEvent ev -> do
-      case ev of
+    AppEvent aev -> do
+      case aev of
         Res _ resb ->
           case resb of
             ResBodyCustom cres ->
@@ -379,9 +358,48 @@ myHandle action reqChan st e = withNextSt st $ \ref -> do
             ResBodyErr msg -> writeStatus ref ("Error: " <> msg)
       pure NextOpContinue
     _ -> pure NextOpContinue
-  -- Debug editor positioning with this:
-  when False (previewEditor action ref)
-  pure n
+
+runWithUiSt :: MonadIO m => St -> (UiSt req -> STM a) -> m (a, St, Seq (Req req))
+runWithUiSt st f = liftIO $ do
+  ref <- newTVarIO st
+  outgoing <- newTVarIO Seq.empty
+  let us = UiSt ref outgoing
+  res <- atomically (f us)
+  st' <- readTVarIO ref
+  outgoing' <- readTVarIO outgoing
+  pure (res, st', outgoing')
+
+sendOutgoing :: MonadIO m => BChan (Req req) -> Seq (Req req) -> m ()
+sendOutgoing reqChan outgoing = liftIO (for_ outgoing (writeBChan reqChan))
+
+myStart :: BChan (Req req) -> Maybe FilePath -> St -> EventM Name St
+myStart reqChan mfp st = do
+  vty <- getVtyHandle
+  let output = V.outputIface vty
+  -- Enable paste
+  when (V.supportsMode output V.BracketedPaste)
+    (liftIO (V.setMode output V.BracketedPaste True))
+  -- Enable mouse
+  when (V.supportsMode output V.Mouse)
+    (liftIO (V.setMode output V.Mouse True))
+  -- Send open file request
+  case mfp of
+    Nothing -> pure st
+    Just fp -> do
+      (_, st', outgoing) <- runWithUiSt st $ \uiSt@(UiSt ref _) -> do
+        writeStatus ref ("Opening " <> T.pack fp)
+        addOutgoing uiSt (ReqBodyOpen fp)
+      sendOutgoing reqChan outgoing
+      pure st'
+
+myHandle :: SimpleLogAction -> BChan (Req DemoReqBody) -> St -> BrickEvent Name (Res DemoResBody) -> EventM Name (Next St)
+myHandle _ reqChan st ev = do
+  (nextOp, st', outgoing) <- runWithUiSt st (\uiSt -> myEventHandler myCommandHandler uiSt ev)
+  case nextOp of
+    NextOpHalt -> halt st'
+    NextOpContinue -> do
+      sendOutgoing reqChan outgoing
+      continue st'
 
 plainOnAttr :: AttrName
 plainOnAttr = "plain" <> "on"
