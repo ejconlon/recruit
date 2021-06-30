@@ -34,32 +34,31 @@ import System.Environment (getArgs)
 import System.Exit (die)
 
 data Name = NameEditor | NameStatus | NameCommand
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
-data ReqBody =
-    ReqBodyPing
-  | ReqBodyBoom
+data ReqBody req =
+    ReqBodyCustom !req
   | ReqBodyOpen !FilePath
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
-data ResBody =
-    ResBodyPong
+data ResBody res =
+    ResBodyCustom !res
   | ResBodyOpened !FilePath !Text
   | ResBodyNotFound !FilePath
   | ResBodyErr !Text
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
-data Req = Req !Int !ReqBody
-  deriving (Eq, Show)
+data Req req = Req !Int !(ReqBody req)
+  deriving stock (Eq, Show)
 
-data Res = Res !Int !ResBody
-  deriving (Eq, Show)
+data Res res = Res !Int !(ResBody res)
+  deriving stock (Eq, Show)
 
 data EdMode =
     EdModeNormal
   | EdModeInsert
   | EdModeCommand
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 edModeFocus :: EdMode -> Name
 edModeFocus emo =
@@ -178,7 +177,7 @@ myDraw st = stacked (join [renderEditor st, renderStatus st, renderCommand st])
 myChoose :: St -> [CursorLocation Name] -> Maybe (CursorLocation Name)
 myChoose = showCursorNamed . stFocus
 
-sendReq :: MonadIO m => BChan Req -> IORef St -> ReqBody -> m ()
+sendReq :: MonadIO m => BChan (Req DemoReqBody) -> IORef St -> ReqBody DemoReqBody -> m ()
 sendReq reqChan ref reqb = do
   st <- liftIO (readIORef ref)
   let n = stReqIndex st
@@ -219,7 +218,7 @@ withNextSt st0 f = do
     NextOpHalt -> halt st1
     NextOpContinue -> continue st1
 
-myStart :: BChan Req -> Maybe FilePath -> St -> EventM Name St
+myStart :: BChan (Req DemoReqBody) -> Maybe FilePath -> St -> EventM Name St
 myStart reqChan mfp st = do
   vty <- getVtyHandle
   let output = V.outputIface vty
@@ -250,7 +249,7 @@ editContents ref f = liftIO (modifyIORef' ref (\st -> st { stEditorContents = f 
 editCommand :: MonadIO m => IORef St -> (TextZipper Text -> TextZipper Text) -> m ()
 editCommand ref f = liftIO (modifyIORef' ref (\st -> st { stCommandLine = f (stCommandLine st) }))
 
-processCommand :: MonadIO m => SimpleLogAction -> BChan Req -> IORef St -> m NextOp
+processCommand :: MonadIO m => SimpleLogAction -> BChan (Req DemoReqBody) -> IORef St -> m NextOp
 processCommand action reqChan ref = do
   comLine <- getsSt ref (currentLine . stCommandLine)
   logDebug action ("COMMAND: " <> comLine)
@@ -259,8 +258,8 @@ processCommand action reqChan ref = do
     ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
     ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
     ["quit"] -> pure (NextOpHalt, True)
-    ["ping"] -> sendReq reqChan ref ReqBodyPing $> (NextOpContinue, True)
-    ["boom"] -> sendReq reqChan ref ReqBodyBoom $> (NextOpContinue, True)
+    ["ping"] -> sendReq reqChan ref (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
+    ["boom"] -> sendReq reqChan ref (ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
     _ -> pure (NextOpContinue, False)
   setEdMode ref EdModeNormal
   unless ok (writeStatus ref ("Bad command: " <> comLine))
@@ -274,7 +273,7 @@ opToClear op =
     NextOpContinue -> ClearNo
     NextOpHalt -> ClearQuit
 
-myHandle :: SimpleLogAction -> BChan Req -> St -> BrickEvent Name Res -> EventM Name (Next St)
+myHandle :: SimpleLogAction -> BChan (Req DemoReqBody) -> St -> BrickEvent Name (Res DemoResBody) -> EventM Name (Next St)
 myHandle action reqChan st e = withNextSt st $ \ref -> do
   n <- case e of
     -- Hard quit: Left option + escape, or ctrl-c
@@ -370,7 +369,9 @@ myHandle action reqChan st e = withNextSt st $ \ref -> do
       case ev of
         Res _ resb ->
           case resb of
-            ResBodyPong -> writeStatus ref "Pong"
+            ResBodyCustom cres ->
+              case cres of
+                DemoResBodyPong -> writeStatus ref "Pong"
             ResBodyOpened fp contents -> do
               setContents ref contents
               writeStatus ref ("Loaded: " <> T.pack fp)
@@ -394,7 +395,7 @@ myAttrMap = attrMap V.defAttr
   , (plainOffAttr, V.white `on` V.black)
   ]
 
-mkApp :: SimpleLogAction -> BChan Req -> Maybe FilePath -> App St Res Name
+mkApp :: SimpleLogAction -> BChan (Req DemoReqBody) -> Maybe FilePath -> App St (Res DemoResBody) Name
 mkApp action reqChan mfp = App
   { appDraw = myDraw
   , appChooseCursor = myChoose
@@ -403,7 +404,7 @@ mkApp action reqChan mfp = App
   , appAttrMap = const myAttrMap
   }
 
-worker :: SimpleLogAction -> BChan Req -> BChan Res -> IO ()
+worker :: SimpleLogAction -> BChan (Req DemoReqBody) -> BChan (Res DemoResBody) -> IO ()
 worker action reqChan evChan = forever go where
   go = do
     req <- liftIO (readBChan reqChan)
@@ -411,8 +412,10 @@ worker action reqChan evChan = forever go where
     let Req n reqb = req
     resb <- handle @SomeException (pure . ResBodyErr . T.pack . show) $ do
       case reqb of
-        ReqBodyPing -> pure ResBodyPong
-        ReqBodyBoom -> error "Boom!"
+        ReqBodyCustom creq ->
+          case creq of
+            DemoReqBodyPing -> pure (ResBodyCustom DemoResBodyPong)
+            DemoReqBodyBoom -> error "Boom!"
         ReqBodyOpen fp -> do
           e <- doesFileExist fp
           if e
@@ -441,3 +444,12 @@ exe = do
     logDebug action "Starting app"
     _ <- race runUi runWorker
     logDebug action "Stopped app"
+
+data DemoReqBody =
+    DemoReqBodyPing
+  | DemoReqBodyBoom
+  deriving stock (Eq, Show)
+
+data DemoResBody =
+    DemoResBodyPong
+  deriving stock (Eq, Show)
