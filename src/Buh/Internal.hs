@@ -6,7 +6,7 @@ https://github.com/jtdaugherty/brick/blob/master/programs/CustomEventDemo.hs
 https://github.com/NorfairKing/writing-a-text-editor-in-haskell-with-brick
 https://hackage.haskell.org/package/brick-0.62/docs/Brick-Main.html#t:App
 -}
-module Buh where
+module Buh.Internal where
 
 import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, EventM, Location (..), Next,
               ViewportType (..), Widget, attrMap, continue, customMain, getVtyHandle, hBox, halt, showCursor,
@@ -14,60 +14,24 @@ import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, Even
 import Brick.BChan (BChan, newBChan, readBChan, writeBChan)
 import Brick.Util (on)
 import Brick.Widgets.Border (hBorder)
+import Buh.Log (Log, markLog, newLog, peekLog, pushLog)
 import Control.Concurrent.Async (race)
-import Control.Monad (forever, join, when)
+import Control.Exception (SomeException, handle)
+import Control.Monad (forever, join, unless, when)
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.Either (isLeft)
 import Data.Functor (($>))
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intersperse)
-import qualified Graphics.Vty as V
-import LittleLogger.Manual (SimpleLogAction, fileSimpleLogAction, logDebug)
--- import Data.Sequence (Seq)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Text.Zipper (TextZipper, currentLine)
 import qualified Data.Text.Zipper as Z
+import qualified Graphics.Vty as V
+import LittleLogger.Manual (SimpleLogAction, fileSimpleLogAction, logDebug)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (die)
-
-newtype Pos = Pos Int deriving (Eq, Show, Ord)
-
-data Span = Span
-  { spanStart :: !Pos
-  , spanEnd :: !Pos
-  } deriving (Eq, Show)
-
-data Elem e a = Elem
-  { elemSpan :: !Span
-  , elemContents :: !Text
-  , elemParsed :: !(Either e a)
-  } deriving (Eq, Show)
-
-data Buffer e a = Buffer
-  { bufferUp :: !(Maybe (Buffer e a))
-  , bufferElem :: !(Elem e a)
-  , bufferTail :: !Text
-  } deriving (Eq, Show)
-
-type Parser e a = Text -> Maybe (Elem e a, Text)
-
-bufferDown :: Parser e a -> Buffer e a -> Maybe (Buffer e a)
-bufferDown p b = fmap (uncurry (Buffer (Just b))) (p (bufferTail b))
-
-bufferIsOk :: Buffer e a -> Bool
-bufferIsOk = isLeft . elemParsed . bufferElem
-
-bufferBottom :: Parser e a -> Buffer e a -> Buffer e a
-bufferBottom p b =
-  if bufferIsOk b
-    then maybe b (bufferBottom p) (bufferDown p b)
-    else b
-
-bufferTop :: Buffer e a -> Buffer e a
-bufferTop b = maybe b bufferTop (bufferUp b)
 
 data Name = NameEditor | NameStatus | NameCommand
   deriving (Eq, Ord, Show)
@@ -82,14 +46,13 @@ data ResBody =
     ResBodyPong
   | ResBodyOpened !FilePath !Text
   | ResBodyNotFound !FilePath
+  | ResBodyErr !Text
   deriving (Eq, Show)
 
 data Req = Req !Int !ReqBody
   deriving (Eq, Show)
 
-data Ev =
-    EvWorkerCrash !Text
-  | EvRes !Int !ResBody
+data Res = Res !Int !ResBody
   deriving (Eq, Show)
 
 data EdMode =
@@ -117,7 +80,7 @@ data St = St
   , stReqIndex :: !Int
   , stFilename :: !(Maybe FilePath)
   , stEditorContents :: !(TextZipper Text)
-  , stStatusLine :: !Text
+  , stStatusLog :: !(Log Text)
   , stCommandLine :: !(TextZipper Text)
   } deriving (Eq, Show)
 
@@ -127,8 +90,8 @@ stFocus = edModeFocus . stEdMode
 emptyZipper :: TextZipper Text
 emptyZipper = Z.textZipper [] Nothing
 
-mkSt :: St
-mkSt = St EdModeNormal 0 Nothing emptyZipper "" emptyZipper
+mkSt :: Int -> St
+mkSt maxLog = St EdModeNormal 0 Nothing emptyZipper (newLog maxLog) emptyZipper
 
 stacked :: [Widget Name] -> [Widget Name]
 stacked widgets = [vBox (intersperse hBorder widgets)]
@@ -185,8 +148,9 @@ renderEditor st =
 
 renderStatus :: St -> [Widget Name]
 renderStatus st =
-  let line = stStatusLine st
-  in [vLimit 1 (viewport NameStatus Horizontal (saniTxt line)) | not (T.null line) ]
+  case peekLog (stStatusLog st) of
+    Just (line, True) -> [vLimit 1 (viewport NameStatus Horizontal (saniTxt line))]
+    _ -> []
 
 renderCommand :: St -> [Widget Name]
 renderCommand st =
@@ -224,7 +188,10 @@ sendReq reqChan ref reqb = do
   liftIO (writeBChan reqChan req)
 
 writeStatus :: MonadIO m => IORef St -> Text -> m ()
-writeStatus ref line = liftIO (modifyIORef' ref (\st -> st { stStatusLine = line }))
+writeStatus ref line = liftIO (modifyIORef' ref (\st -> st { stStatusLog = pushLog (stStatusLog st) line }))
+
+clearStatus :: MonadIO m => IORef St -> m ()
+clearStatus ref = liftIO (modifyIORef' ref (\st -> st { stStatusLog = markLog (stStatusLog st) }))
 
 setContents :: MonadIO m => IORef St -> Text -> m ()
 setContents ref contents = liftIO (modifyIORef' ref (\st -> st { stEditorContents = Z.textZipper (T.lines contents) Nothing }))
@@ -283,15 +250,20 @@ editContents ref f = liftIO (modifyIORef' ref (\st -> st { stEditorContents = f 
 editCommand :: MonadIO m => IORef St -> (TextZipper Text -> TextZipper Text) -> m ()
 editCommand ref f = liftIO (modifyIORef' ref (\st -> st { stCommandLine = f (stCommandLine st) }))
 
-processCommand :: MonadIO m => IORef St -> m NextOp
-processCommand ref = do
+processCommand :: MonadIO m => SimpleLogAction -> BChan Req -> IORef St -> m NextOp
+processCommand action reqChan ref = do
   comLine <- getsSt ref (currentLine . stCommandLine)
-  op <- case T.words comLine of
-    ["top"] -> editContents ref Z.gotoBOF $> NextOpContinue
-    ["bottom"] -> editContents ref Z.gotoEOF $> NextOpContinue
-    ["quit"] -> pure NextOpHalt
-    _ -> writeStatus ref ("Bad command: " <> comLine) $> NextOpContinue
+  logDebug action ("COMMAND: " <> comLine)
+  (op, ok) <- case T.words comLine of
+    [] -> pure (NextOpContinue, True)
+    ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
+    ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
+    ["quit"] -> pure (NextOpHalt, True)
+    ["ping"] -> sendReq reqChan ref ReqBodyPing $> (NextOpContinue, True)
+    ["boom"] -> sendReq reqChan ref ReqBodyBoom $> (NextOpContinue, True)
+    _ -> pure (NextOpContinue, False)
   setEdMode ref EdModeNormal
+  unless ok (writeStatus ref ("Bad command: " <> comLine))
   pure op
 
 data Clear = ClearYes | ClearNo | ClearQuit deriving (Eq, Show)
@@ -302,8 +274,8 @@ opToClear op =
     NextOpContinue -> ClearNo
     NextOpHalt -> ClearQuit
 
-myHandle :: SimpleLogAction -> BChan Req -> St -> BrickEvent Name Ev -> EventM Name (Next St)
-myHandle action _ st e = withNextSt st $ \ref -> do
+myHandle :: SimpleLogAction -> BChan Req -> St -> BrickEvent Name Res -> EventM Name (Next St)
+myHandle action reqChan st e = withNextSt st $ \ref -> do
   n <- case e of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
@@ -387,23 +359,23 @@ myHandle action _ st e = withNextSt st $ \ref -> do
             (V.KChar 'd', [V.MCtrl]) -> editCommand ref Z.deleteChar $> ClearYes
             (V.KBS, []) -> editCommand ref Z.deletePrevChar $> ClearYes
             (V.KChar c, []) -> editCommand ref (Z.insertChar c) $> ClearYes
-            (V.KEnter, []) -> fmap opToClear (processCommand ref)
+            (V.KEnter, []) -> fmap opToClear (processCommand action reqChan ref)
             _ -> pure ClearNo
       case clear of
-        ClearYes -> writeStatus ref "" $> NextOpContinue
+        ClearYes -> clearStatus ref $> NextOpContinue
         ClearNo -> pure NextOpContinue
         ClearQuit -> pure NextOpHalt
     -- Handle worker events
     AppEvent ev -> do
       case ev of
-        EvWorkerCrash msg -> error ("Worker crashed: " ++ T.unpack msg)
-        EvRes _ resb ->
+        Res _ resb ->
           case resb of
             ResBodyPong -> writeStatus ref "Pong"
             ResBodyOpened fp contents -> do
               setContents ref contents
               writeStatus ref ("Loaded: " <> T.pack fp)
             ResBodyNotFound fp -> writeStatus ref ("File not found: " <> T.pack fp)
+            ResBodyErr msg -> writeStatus ref ("Error: " <> msg)
       pure NextOpContinue
     _ -> pure NextOpContinue
   -- Debug editor positioning with this:
@@ -422,7 +394,7 @@ myAttrMap = attrMap V.defAttr
   , (plainOffAttr, V.white `on` V.black)
   ]
 
-mkApp :: SimpleLogAction -> BChan Req -> Maybe FilePath -> App St Ev Name
+mkApp :: SimpleLogAction -> BChan Req -> Maybe FilePath -> App St Res Name
 mkApp action reqChan mfp = App
   { appDraw = myDraw
   , appChooseCursor = myChoose
@@ -431,20 +403,22 @@ mkApp action reqChan mfp = App
   , appAttrMap = const myAttrMap
   }
 
-worker :: SimpleLogAction -> BChan Req -> BChan Ev -> IO ()
-worker action reqChan evChan = forever $ do
-  req <- liftIO (readBChan reqChan)
-  logDebug action ("Worker req: " <> T.pack (show req))
-  let Req n reqb = req
-  resb <- case reqb of
-    ReqBodyPing -> pure ResBodyPong
-    ReqBodyBoom -> error "Boom!"
-    ReqBodyOpen fp -> do
-      e <- doesFileExist fp
-      if e
-        then fmap (ResBodyOpened fp) (TIO.readFile fp)
-        else pure (ResBodyNotFound fp)
-  liftIO (writeBChan evChan (EvRes n resb))
+worker :: SimpleLogAction -> BChan Req -> BChan Res -> IO ()
+worker action reqChan evChan = forever go where
+  go = do
+    req <- liftIO (readBChan reqChan)
+    logDebug action ("Worker req: " <> T.pack (show req))
+    let Req n reqb = req
+    resb <- handle @SomeException (pure . ResBodyErr . T.pack . show) $ do
+      case reqb of
+        ReqBodyPing -> pure ResBodyPong
+        ReqBodyBoom -> error "Boom!"
+        ReqBodyOpen fp -> do
+          e <- doesFileExist fp
+          if e
+            then fmap (ResBodyOpened fp) (TIO.readFile fp)
+            else pure (ResBodyNotFound fp)
+    liftIO (writeBChan evChan (Res n resb))
 
 exe :: IO ()
 exe = do
@@ -453,16 +427,17 @@ exe = do
     [] -> pure Nothing
     [fn] -> pure (Just fn)
     _ -> die "Use: buffer.hs [filename]"
-  putStrLn "Configuring app"
-  let maxLen = 1000
-  reqChan <- newBChan maxLen
-  evChan <- newBChan maxLen
+  let maxChanLen = 1000
+      maxLogLen = 100
+  reqChan <- newBChan maxChanLen
+  evChan <- newBChan maxChanLen
   let vtyBuilder = V.mkVty V.defaultConfig
   firstVty <- vtyBuilder
   fileSimpleLogAction "/tmp/buh" $ \action -> do
     let app = mkApp action reqChan mfn
-        runUi = customMain firstVty vtyBuilder (Just evChan) app mkSt
+        st = mkSt maxLogLen
+        runUi = customMain firstVty vtyBuilder (Just evChan) app st
         runWorker = worker action reqChan evChan
-    putStrLn "Starting app"
+    logDebug action "Starting app"
     _ <- race runUi runWorker
-    putStrLn "Stopped app"
+    logDebug action "Stopped app"

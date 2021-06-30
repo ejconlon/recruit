@@ -24,7 +24,11 @@ source-repository head
 
 library
   exposed-modules:
-      Buh
+      Buh.Demo
+      Buh.Etc
+      Buh.Internal
+      Buh.Lib
+      Buh.Log
   other-modules:
       Paths_buh
   hs-source-dirs:
@@ -60,8 +64,10 @@ library
       async
     , base >=4.12 && <5
     , brick
+    , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , stm
     , text
     , text-zipper
     , vty
@@ -105,8 +111,10 @@ executable buh-exe
     , base >=4.12 && <5
     , brick
     , buh
+    , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , stm
     , text
     , text-zipper
     , vty
@@ -151,8 +159,10 @@ test-suite buh-test
     , base >=4.12 && <5
     , brick
     , buh
+    , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , stm
     , tasty
     , tasty-hunit
     , text

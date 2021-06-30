@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Buh (exe)
+import Buh.Internal (exe)
 
 main :: IO ()
 main = exe
