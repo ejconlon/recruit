@@ -6,7 +6,7 @@ https://github.com/jtdaugherty/brick/blob/master/programs/CustomEventDemo.hs
 https://github.com/NorfairKing/writing-a-text-editor-in-haskell-with-brick
 https://hackage.haskell.org/package/brick-0.62/docs/Brick-Main.html#t:App
 -}
-module Buh.Internal where
+module Buh.Internal (mkExe) where
 
 import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, EventM, Location (..), Next,
               ViewportType (..), Widget, attrMap, continue, customMain, getVtyHandle, hBox, halt, showCursor,
@@ -14,6 +14,8 @@ import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, Even
 import Brick.BChan (BChan, newBChan, readBChan, writeBChan)
 import Brick.Util (on)
 import Brick.Widgets.Border (hBorder)
+import Buh.Interface (CustomDef (..), Iface (..), NextOp (..), ReqBody (..), ReqId, ResBody (..), UserCommandHandler,
+                      UserEventHandler, UserWorker)
 import Buh.Log (Log, markLog, newLog, peekLog, pushLog)
 import Control.Concurrent.Async (race)
 import Control.Concurrent.STM (STM, atomically)
@@ -40,22 +42,10 @@ import System.Exit (die)
 data Name = NameEditor | NameStatus | NameCommand
   deriving stock (Eq, Ord, Show)
 
-data ReqBody req =
-    ReqBodyCustom !req
-  | ReqBodyOpen !FilePath
+data Req req = Req !ReqId !(ReqBody req)
   deriving stock (Eq, Show)
 
-data ResBody res =
-    ResBodyCustom !res
-  | ResBodyOpened !FilePath !Text
-  | ResBodyNotFound !FilePath
-  | ResBodyErr !Text
-  deriving stock (Eq, Show)
-
-data Req req = Req !Int !(ReqBody req)
-  deriving stock (Eq, Show)
-
-data Res res = Res !Int !(ResBody res)
+data Res res = Res !ReqId !(ResBody res)
   deriving stock (Eq, Show)
 
 data EdMode =
@@ -80,7 +70,7 @@ edModeText emo =
 
 data St = St
   { stEdMode :: !EdMode
-  , stReqIndex :: !Int
+  , stNextReqId :: !ReqId
   , stFilename :: !(Maybe FilePath)
   , stEditorContents :: !(TextZipper Text)
   , stStatusLog :: !(Log Text)
@@ -183,9 +173,9 @@ myChoose = showCursorNamed . stFocus
 
 newReq :: TVar St -> ReqBody req -> STM (Req req)
 newReq ref reqb = stateTVar ref $ \st ->
-  let n = stReqIndex st
+  let n = stNextReqId st
       req = Req n reqb
-      st' = st { stReqIndex = n + 1 }
+      st' = st { stNextReqId = succ n }
   in (req, st')
 
 writeStatus :: TVar St -> Text -> STM ()
@@ -211,18 +201,11 @@ editContents ref f = modifyTVar' ref (\st -> st { stEditorContents = f (stEditor
 editCommand :: TVar St -> (TextZipper Text -> TextZipper Text) -> STM ()
 editCommand ref f = modifyTVar' ref (\st -> st { stCommandLine = f (stCommandLine st) })
 
-data NextOp = NextOpHalt | NextOpContinue
-  deriving (Eq, Show)
-
-data UiSt req = UiSt
-  { uiStRef :: !(TVar St)
-  , uiStOutgoing :: !(TVar (Seq (Req req)))
-  }
-
-addOutgoing :: UiSt req -> ReqBody req -> STM ()
-addOutgoing (UiSt ref outgoing) rb = do
-  r <- newReq ref rb
+addOutgoing :: TVar St -> TVar (Seq (Req req)) -> ReqBody req -> STM ReqId
+addOutgoing ref outgoing rb = do
+  r@(Req n _) <- newReq ref rb
   modifyTVar' outgoing (:|> r)
+  pure n
 
 data Clear = ClearYes | ClearNo | ClearQuit deriving (Eq, Show)
 
@@ -232,36 +215,24 @@ opToClear op =
     NextOpContinue -> ClearNo
     NextOpHalt -> ClearQuit
 
-type CommandHandler req = UiSt req -> Text -> STM NextOp
+type CommandHandler req = Iface req -> TVar St -> Text -> STM NextOp
 
-type EventHandler req res = UiSt req -> BrickEvent Name (Res res) -> STM NextOp
-
-type UserCommandHandler req = UiSt req -> Text -> STM (NextOp, Bool)
-
-type UserEventHandler req res = UiSt req -> res -> STM NextOp
-
-type UserWorker req res = SimpleLogAction -> req -> IO (ResBody res)
-
-data CustomDef req res = CustomDef
-  { customCommandHandler :: !(UserCommandHandler req)
-  , customEventHandler :: !(UserEventHandler req res)
-  , customWorker :: !(UserWorker req res)
-  }
+type EventHandler req res = Iface req -> TVar St -> BrickEvent Name (Res res) -> STM NextOp
 
 mkCommandHandler :: UserCommandHandler req -> CommandHandler req
-mkCommandHandler userCommandHandler uiSt@(UiSt ref _) cmd = do
+mkCommandHandler userCommandHandler iface ref cmd = do
   (op, ok) <- case T.words cmd of
     [] -> pure (NextOpContinue, True)
     ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
     ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
     ["quit"] -> pure (NextOpHalt, True)
-    _ -> userCommandHandler uiSt cmd
+    _ -> userCommandHandler iface cmd
   setEdMode ref EdModeNormal
   unless ok (writeStatus ref ("Bad command: " <> cmd))
   pure op
 
 mkEventHandler :: CommandHandler req -> UserEventHandler req res -> EventHandler req res
-mkEventHandler commandHandler userEventHandler uiSt@(UiSt ref _) ev =
+mkEventHandler commandHandler userEventHandler iface ref ev =
   case ev of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
@@ -347,7 +318,7 @@ mkEventHandler commandHandler userEventHandler uiSt@(UiSt ref _) ev =
             (V.KChar c, []) -> editCommand ref (Z.insertChar c) $> ClearYes
             (V.KEnter, []) -> do
               cmd <- fmap (currentLine . stCommandLine) (readTVar ref)
-              fmap opToClear (commandHandler uiSt cmd)
+              fmap opToClear (commandHandler iface ref cmd)
             _ -> pure ClearNo
       case clear of
         ClearYes -> clearStatus ref $> NextOpContinue
@@ -358,7 +329,7 @@ mkEventHandler commandHandler userEventHandler uiSt@(UiSt ref _) ev =
       case aev of
         Res _ resb ->
           case resb of
-            ResBodyCustom cres -> userEventHandler uiSt cres
+            ResBodyCustom cres -> userEventHandler iface cres
             ResBodyOpened fp contents -> do
               setContents ref contents
               writeStatus ref ("Loaded: " <> T.pack fp)
@@ -372,12 +343,12 @@ mkEventHandler commandHandler userEventHandler uiSt@(UiSt ref _) ev =
     -- Skip the rest
     _ -> pure NextOpContinue
 
-runWithUiSt :: MonadIO m => St -> (UiSt req -> STM a) -> m (a, St, Seq (Req req))
-runWithUiSt st f = liftIO $ do
+runWithIface :: MonadIO m => St -> (Iface req -> TVar St -> STM a) -> m (a, St, Seq (Req req))
+runWithIface st f = liftIO $ do
   ref <- newTVarIO st
   outgoing <- newTVarIO Seq.empty
-  let us = UiSt ref outgoing
-  res <- atomically (f us)
+  let iface = Iface (addOutgoing ref outgoing) (writeStatus ref)
+  res <- atomically (f iface ref)
   st' <- readTVarIO ref
   outgoing' <- readTVarIO outgoing
   pure (res, st', outgoing')
@@ -399,15 +370,15 @@ myStart reqChan mfp st = do
   case mfp of
     Nothing -> pure st
     Just fp -> do
-      (_, st', outgoing) <- runWithUiSt st $ \uiSt@(UiSt ref _) -> do
-        writeStatus ref ("Opening " <> T.pack fp)
-        addOutgoing uiSt (ReqBodyOpen fp)
+      (_, st', outgoing) <- runWithIface st $ \iface _ -> do
+        ifaceWriteStatus iface ("Opening " <> T.pack fp)
+        ifaceSend iface (ReqBodyOpen fp)
       sendOutgoing reqChan outgoing
       pure st'
 
 myHandle :: EventHandler req res -> SimpleLogAction -> BChan (Req req) -> St -> BrickEvent Name (Res res) -> EventM Name (Next St)
 myHandle eventHandler _ reqChan st ev = do
-  (nextOp, st', outgoing) <- runWithUiSt st (`eventHandler` ev)
+  (nextOp, st', outgoing) <- runWithIface st (\iface ref -> eventHandler iface ref ev)
   case nextOp of
     NextOpHalt -> halt st'
     NextOpContinue -> do
@@ -451,8 +422,8 @@ mkWorker userWorker action reqChan evChan = forever go where
             else pure (ResBodyNotFound fp)
     writeBChan evChan (Res n resb)
 
-customExe :: Show req => CustomDef req res -> IO ()
-customExe (CustomDef userCommandHandler userEventHandler userWorker) = do
+mkExe :: Show req => CustomDef req res -> IO ()
+mkExe (CustomDef userCommandHandler userEventHandler userWorker) = do
   let commandHandler = mkCommandHandler userCommandHandler
   let eventHandler = mkEventHandler commandHandler userEventHandler
   args <- getArgs

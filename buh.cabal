@@ -26,8 +26,8 @@ library
   exposed-modules:
       Buh.Demo
       Buh.Etc
+      Buh.Interface
       Buh.Internal
-      Buh.Lib
       Buh.Log
   other-modules:
       Paths_buh

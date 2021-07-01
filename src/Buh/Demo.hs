@@ -4,8 +4,9 @@ module Buh.Demo
   ( exe
   ) where
 
-import Buh.Internal (CustomDef (..), NextOp (..), ReqBody (..), ResBody (..), UiSt (..), UserCommandHandler,
-                     UserEventHandler, UserWorker, addOutgoing, customExe, writeStatus)
+import Buh.Interface (CustomDef (..), Iface (..), NextOp (..), ReqBody (..), ResBody (..), UserCommandHandler,
+                      UserEventHandler, UserWorker)
+import Buh.Internal (mkExe)
 import Data.Functor (($>))
 import qualified Data.Text as T
 
@@ -19,17 +20,17 @@ data DemoResBody =
   deriving stock (Eq, Show)
 
 userCommandHandler :: UserCommandHandler DemoReqBody
-userCommandHandler uiSt cmd = do
+userCommandHandler iface cmd = do
   case T.words cmd of
-    ["ping"] -> addOutgoing uiSt (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
-    ["boom"] -> addOutgoing uiSt (ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
+    ["ping"] -> ifaceSend iface (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
+    ["boom"] -> ifaceSend iface (ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
     _ -> pure (NextOpContinue, False)
 
 userEventHandler :: UserEventHandler DemoReqBody DemoResBody
-userEventHandler (UiSt ref _) cres =
+userEventHandler iface cres =
   case cres of
     DemoResBodyPong -> do
-      writeStatus ref "Pong"
+      ifaceWriteStatus iface "Pong"
       pure NextOpContinue
 
 userWorker :: UserWorker DemoReqBody DemoResBody
@@ -42,4 +43,4 @@ customDef :: CustomDef DemoReqBody DemoResBody
 customDef = CustomDef userCommandHandler userEventHandler userWorker
 
 exe :: IO ()
-exe = customExe customDef
+exe = mkExe customDef
