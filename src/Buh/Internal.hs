@@ -234,24 +234,34 @@ opToClear op =
 
 type CommandHandler req = UiSt req -> Text -> STM NextOp
 
-type EventHandler req res = CommandHandler req -> UiSt req -> BrickEvent Name (Res res) -> STM NextOp
+type EventHandler req res = UiSt req -> BrickEvent Name (Res res) -> STM NextOp
 
-myCommandHandler :: CommandHandler DemoReqBody
-myCommandHandler uiSt@(UiSt ref _) cmd = do
+type UserCommandHandler req = UiSt req -> Text -> STM (NextOp, Bool)
+
+type UserEventHandler req res = UiSt req -> res -> STM NextOp
+
+type UserWorker req res = SimpleLogAction -> req -> IO (ResBody res)
+
+data CustomDef req res = CustomDef
+  { customCommandHandler :: !(UserCommandHandler req)
+  , customEventHandler :: !(UserEventHandler req res)
+  , customWorker :: !(UserWorker req res)
+  }
+
+mkCommandHandler :: UserCommandHandler req -> CommandHandler req
+mkCommandHandler userCommandHandler uiSt@(UiSt ref _) cmd = do
   (op, ok) <- case T.words cmd of
     [] -> pure (NextOpContinue, True)
     ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
     ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
     ["quit"] -> pure (NextOpHalt, True)
-    ["ping"] -> addOutgoing uiSt (ReqBodyCustom DemoReqBodyPing) $> (NextOpContinue, True)
-    ["boom"] -> addOutgoing uiSt(ReqBodyCustom DemoReqBodyBoom) $> (NextOpContinue, True)
-    _ -> pure (NextOpContinue, False)
+    _ -> userCommandHandler uiSt cmd
   setEdMode ref EdModeNormal
   unless ok (writeStatus ref ("Bad command: " <> cmd))
   pure op
 
-myEventHandler :: EventHandler DemoReqBody DemoResBody
-myEventHandler commandHandler uiSt@(UiSt ref _) ev =
+mkEventHandler :: CommandHandler req -> UserEventHandler req res -> EventHandler req res
+mkEventHandler commandHandler userEventHandler uiSt@(UiSt ref _) ev =
   case ev of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
@@ -348,15 +358,18 @@ myEventHandler commandHandler uiSt@(UiSt ref _) ev =
       case aev of
         Res _ resb ->
           case resb of
-            ResBodyCustom cres ->
-              case cres of
-                DemoResBodyPong -> writeStatus ref "Pong"
+            ResBodyCustom cres -> userEventHandler uiSt cres
             ResBodyOpened fp contents -> do
               setContents ref contents
               writeStatus ref ("Loaded: " <> T.pack fp)
-            ResBodyNotFound fp -> writeStatus ref ("File not found: " <> T.pack fp)
-            ResBodyErr msg -> writeStatus ref ("Error: " <> msg)
-      pure NextOpContinue
+              pure NextOpContinue
+            ResBodyNotFound fp -> do
+              writeStatus ref ("File not found: " <> T.pack fp)
+              pure NextOpContinue
+            ResBodyErr msg -> do
+              writeStatus ref ("Error: " <> msg)
+              pure NextOpContinue
+    -- Skip the rest
     _ -> pure NextOpContinue
 
 runWithUiSt :: MonadIO m => St -> (UiSt req -> STM a) -> m (a, St, Seq (Req req))
@@ -392,9 +405,9 @@ myStart reqChan mfp st = do
       sendOutgoing reqChan outgoing
       pure st'
 
-myHandle :: SimpleLogAction -> BChan (Req DemoReqBody) -> St -> BrickEvent Name (Res DemoResBody) -> EventM Name (Next St)
-myHandle _ reqChan st ev = do
-  (nextOp, st', outgoing) <- runWithUiSt st (\uiSt -> myEventHandler myCommandHandler uiSt ev)
+myHandle :: EventHandler req res -> SimpleLogAction -> BChan (Req req) -> St -> BrickEvent Name (Res res) -> EventM Name (Next St)
+myHandle eventHandler _ reqChan st ev = do
+  (nextOp, st', outgoing) <- runWithUiSt st (`eventHandler` ev)
   case nextOp of
     NextOpHalt -> halt st'
     NextOpContinue -> do
@@ -413,36 +426,35 @@ myAttrMap = attrMap V.defAttr
   , (plainOffAttr, V.white `on` V.black)
   ]
 
-mkApp :: SimpleLogAction -> BChan (Req DemoReqBody) -> Maybe FilePath -> App St (Res DemoResBody) Name
-mkApp action reqChan mfp = App
+mkApp :: EventHandler req res -> SimpleLogAction -> BChan (Req req) -> Maybe FilePath -> App St (Res res) Name
+mkApp eventHandler action reqChan mfp = App
   { appDraw = myDraw
   , appChooseCursor = myChoose
-  , appHandleEvent = myHandle action reqChan
+  , appHandleEvent = myHandle eventHandler action reqChan
   , appStartEvent = myStart reqChan mfp
   , appAttrMap = const myAttrMap
   }
 
-worker :: SimpleLogAction -> BChan (Req DemoReqBody) -> BChan (Res DemoResBody) -> IO ()
-worker action reqChan evChan = forever go where
+mkWorker :: Show req => UserWorker req res -> SimpleLogAction -> BChan (Req req) -> BChan (Res res) -> IO ()
+mkWorker userWorker action reqChan evChan = forever go where
   go = do
-    req <- liftIO (readBChan reqChan)
+    req <- readBChan reqChan
     logDebug action ("Worker req: " <> T.pack (show req))
     let Req n reqb = req
     resb <- handle @SomeException (pure . ResBodyErr . T.pack . show) $ do
       case reqb of
-        ReqBodyCustom creq ->
-          case creq of
-            DemoReqBodyPing -> pure (ResBodyCustom DemoResBodyPong)
-            DemoReqBodyBoom -> error "Boom!"
+        ReqBodyCustom creq -> userWorker action creq
         ReqBodyOpen fp -> do
           e <- doesFileExist fp
           if e
             then fmap (ResBodyOpened fp) (TIO.readFile fp)
             else pure (ResBodyNotFound fp)
-    liftIO (writeBChan evChan (Res n resb))
+    writeBChan evChan (Res n resb)
 
-exe :: IO ()
-exe = do
+customExe :: Show req => CustomDef req res -> IO ()
+customExe (CustomDef userCommandHandler userEventHandler userWorker) = do
+  let commandHandler = mkCommandHandler userCommandHandler
+  let eventHandler = mkEventHandler commandHandler userEventHandler
   args <- getArgs
   mfn <- case args of
     [] -> pure Nothing
@@ -455,19 +467,10 @@ exe = do
   let vtyBuilder = V.mkVty V.defaultConfig
   firstVty <- vtyBuilder
   fileSimpleLogAction "/tmp/buh" $ \action -> do
-    let app = mkApp action reqChan mfn
+    let app = mkApp eventHandler action reqChan mfn
         st = mkSt maxLogLen
         runUi = customMain firstVty vtyBuilder (Just evChan) app st
-        runWorker = worker action reqChan evChan
+        runWorker = mkWorker userWorker action reqChan evChan
     logDebug action "Starting app"
     _ <- race runUi runWorker
     logDebug action "Stopped app"
-
-data DemoReqBody =
-    DemoReqBodyPing
-  | DemoReqBodyBoom
-  deriving stock (Eq, Show)
-
-data DemoResBody =
-    DemoResBodyPong
-  deriving stock (Eq, Show)
