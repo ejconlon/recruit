@@ -14,14 +14,15 @@ import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, Even
 import Brick.BChan (BChan, newBChan, readBChan, writeBChan)
 import Brick.Util (on)
 import Brick.Widgets.Border (hBorder)
+import Buh.Completes (Completes, Trie, advanceCompletes, mkCompletes, mkEmptyCompletes, mkTrie, readCompletes)
 import Buh.Interface (CustomDef (..), Iface (..), NextOp (..), ReqBody (..), ReqId, ResBody (..), UserCommandHandler,
                       UserEventHandler, UserWorker)
-import Buh.Log (Log, markLog, newLog, peekLog, pushLog)
+import Buh.Log (Log, markLog, newLog, peekLog, pushLog, textLog)
 import Control.Concurrent.Async (race)
 import Control.Concurrent.STM (STM, atomically)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO, stateTVar)
 import Control.Exception (SomeException, handle)
-import Control.Monad (forever, join, unless, when)
+import Control.Monad (forever, join, unless, void, when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Foldable (for_)
 import Data.Functor (($>))
@@ -34,7 +35,7 @@ import qualified Data.Text.IO as TIO
 import Data.Text.Zipper (TextZipper, currentLine)
 import qualified Data.Text.Zipper as Z
 import qualified Graphics.Vty as V
-import LittleLogger.Manual (SimpleLogAction, fileSimpleLogAction, logDebug)
+import LittleLogger.Manual (Severity (Debug), SimpleLogAction, fileSimpleLogAction, logDebug, logWithSeverity)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -52,6 +53,8 @@ data EdMode =
     EdModeNormal
   | EdModeInsert
   | EdModeCommand
+  | EdModeLog
+  | EdModeHelp
   deriving stock (Eq, Show)
 
 edModeFocus :: EdMode -> Name
@@ -60,6 +63,8 @@ edModeFocus emo =
     EdModeNormal -> NameEditor
     EdModeInsert -> NameEditor
     EdModeCommand -> NameCommand
+    EdModeLog -> NameEditor
+    EdModeHelp -> NameEditor
 
 edModeText :: EdMode -> Text
 edModeText emo =
@@ -67,6 +72,8 @@ edModeText emo =
     EdModeNormal -> "Normal"
     EdModeInsert -> "Insert"
     EdModeCommand -> "Command"
+    EdModeLog -> "Log"
+    EdModeHelp -> "Help"
 
 data St = St
   { stEdMode :: !EdMode
@@ -75,7 +82,8 @@ data St = St
   , stEditorContents :: !(TextZipper Text)
   , stStatusLog :: !(Log Text)
   , stCommandLine :: !(TextZipper Text)
-  } deriving (Eq, Show)
+  , stCommandCompletes :: !(Maybe Completes)
+  } deriving stock (Eq, Show)
 
 stFocus :: St -> Name
 stFocus = edModeFocus . stEdMode
@@ -84,7 +92,7 @@ emptyZipper :: TextZipper Text
 emptyZipper = Z.textZipper [] Nothing
 
 mkSt :: Int -> St
-mkSt maxLog = St EdModeNormal 0 Nothing emptyZipper (newLog maxLog) emptyZipper
+mkSt maxLog = St EdModeNormal 0 Nothing emptyZipper (newLog maxLog) emptyZipper Nothing
 
 stacked :: [Widget Name] -> [Widget Name]
 stacked widgets = [vBox (intersperse hBorder widgets)]
@@ -108,36 +116,57 @@ charAtCursor z =
        then Just (T.take 1 toRight)
        else Nothing
 
-previewEditor :: MonadIO m => SimpleLogAction -> TVar St -> m ()
-previewEditor action ref = do
-  st <- liftIO (readTVarIO ref)
-  let z = stEditorContents st
-      emo = stEdMode st
-      foc = emo /= EdModeCommand
-      (row, col) = Z.cursorPosition z
-      toLeft = T.take col (Z.currentLine z)
-      cursorLoc = Location (textWidth toLeft, row)
-      atChar = charAtCursor z
-      atCharWidth = maybe 1 textWidth atChar
-  logDebug action (T.intercalate " " (fmap T.pack ["EDITOR", show emo, show foc, show row, show col, show toLeft, show cursorLoc, show atChar, show atCharWidth]))
+-- previewEditor :: MonadIO m => SimpleLogAction -> TVar St -> m ()
+-- previewEditor action ref = do
+--   st <- liftIO (readTVarIO ref)
+--   let z = stEditorContents st
+--       emo = stEdMode st
+--       foc = emo /= EdModeCommand
+--       (row, col) = Z.cursorPosition z
+--       toLeft = T.take col (Z.currentLine z)
+--       cursorLoc = Location (textWidth toLeft, row)
+--       atChar = charAtCursor z
+--       atCharWidth = maybe 1 textWidth atChar
+--   logDebug action (T.intercalate " " (fmap T.pack ["EDITOR", show emo, show foc, show row, show col, show toLeft, show cursorLoc, show atChar, show atCharWidth]))
 
-renderEditor :: St -> [Widget Name]
-renderEditor st =
-    let z = stEditorContents st
-        emo = stEdMode st
-        foc = emo /= EdModeCommand
-        (row, col) = Z.cursorPosition z
-        toLeft = T.take col (Z.currentLine z)
-        cursorLoc = Location (textWidth toLeft, row)
-        atChar = charAtCursor z
-        atCharWidth = maybe 1 textWidth atChar
-        widget = withAttr plainOffAttr $
-          viewport NameEditor Both $
-          (if foc then showCursor NameEditor cursorLoc else id) $
-          visibleRegion cursorLoc (atCharWidth, 1) $
-          vBox . fmap saniTxt $
-          Z.getText z
-    in [widget]
+renderEditor :: [(Text, Text)] -> St -> [Widget Name]
+renderEditor commandNames st =
+    let emo = stEdMode st
+    in case emo of
+      EdModeLog ->
+        let lg = stStatusLog st
+            contents = textLog lg
+            cursorLoc = Location (0, 0)
+            atCharWidth = 1
+            widget = withAttr plainOffAttr $
+              viewport NameEditor Both $
+              visibleRegion cursorLoc (atCharWidth, 1) $
+              vBox . fmap saniTxt $ contents
+        in [widget]
+      EdModeHelp ->
+        let contents = fmap (\(a, b) -> a <> " - " <> b) commandNames
+            cursorLoc = Location (0, 0)
+            atCharWidth = 1
+            widget = withAttr plainOffAttr $
+              viewport NameEditor Both $
+              visibleRegion cursorLoc (atCharWidth, 1) $
+              vBox . fmap saniTxt $ contents
+        in [widget]
+      _ ->
+        let z = stEditorContents st
+            foc = emo /= EdModeCommand
+            (row, col) = Z.cursorPosition z
+            toLeft = T.take col (Z.currentLine z)
+            cursorLoc = Location (textWidth toLeft, row)
+            atChar = charAtCursor z
+            atCharWidth = maybe 1 textWidth atChar
+            widget = withAttr plainOffAttr $
+              viewport NameEditor Both $
+              (if foc then showCursor NameEditor cursorLoc else id) $
+              visibleRegion cursorLoc (atCharWidth, 1) $
+              vBox . fmap saniTxt $
+              Z.getText z
+        in [widget]
 
 renderStatus :: St -> [Widget Name]
 renderStatus st =
@@ -165,8 +194,8 @@ renderCommand st =
         outerWidget = hBox [txt ":", innerWidget]
     in [vLimit 1 outerWidget | foc]
 
-myDraw :: St -> [Widget Name]
-myDraw st = stacked (join [renderEditor st, renderStatus st, renderCommand st])
+myDraw :: [(Text, Text)] -> St -> [Widget Name]
+myDraw commandNames st = stacked (join [renderEditor commandNames st, renderStatus st, renderCommand st])
 
 myChoose :: St -> [CursorLocation Name] -> Maybe (CursorLocation Name)
 myChoose = showCursorNamed . stFocus
@@ -190,16 +219,30 @@ setContents ref contents = modifyTVar' ref (\st -> st { stEditorContents = Z.tex
 setEdMode :: TVar St -> EdMode -> STM ()
 setEdMode ref emo = do
   modifyTVar' ref $ \st ->
-    -- If moving away from command focus, clear command line
-    let comLine = if emo /= EdModeCommand && stEdMode st == EdModeCommand then Z.textZipper [] Nothing else stCommandLine st
-    in st { stEdMode = emo, stCommandLine = comLine }
+    -- If moving away from command focus, clear command line and completes too
+    if emo /= EdModeCommand && stEdMode st == EdModeCommand
+      then st { stEdMode = emo, stCommandLine = Z.textZipper [] Nothing, stCommandCompletes = Nothing }
+      else st { stEdMode = emo }
   writeStatus ref (edModeText emo <> " mode")
 
 editContents :: TVar St -> (TextZipper Text -> TextZipper Text) -> STM ()
 editContents ref f = modifyTVar' ref (\st -> st { stEditorContents = f (stEditorContents st) })
 
 editCommand :: TVar St -> (TextZipper Text -> TextZipper Text) -> STM ()
-editCommand ref f = modifyTVar' ref (\st -> st { stCommandLine = f (stCommandLine st) })
+editCommand ref f = modifyTVar' ref (\st -> st { stCommandLine = f (stCommandLine st), stCommandCompletes = Nothing })
+
+tabComplete :: TVar St -> Trie -> STM ()
+tabComplete ref commandTrie = modifyTVar' ref $ \st ->
+  let completes' =
+        case stCommandCompletes st of
+          Nothing ->
+            let query = T.intercalate "\n" (Z.getText (stCommandLine st))
+            in if T.null query
+              then mkEmptyCompletes ["help", "quit"]
+              else mkCompletes commandTrie query
+          Just completes -> advanceCompletes completes
+      newText = readCompletes completes'
+  in st { stCommandLine = Z.gotoEOF (Z.textZipper (T.lines newText) Nothing), stCommandCompletes = Just completes' }
 
 addOutgoing :: TVar St -> TVar (Seq (Req req)) -> ReqBody req -> STM ReqId
 addOutgoing ref outgoing rb = do
@@ -219,20 +262,54 @@ type CommandHandler req = Iface req -> TVar St -> Text -> STM NextOp
 
 type EventHandler req res = Iface req -> TVar St -> BrickEvent Name (Res res) -> STM NextOp
 
+defaultCommandNames :: [(Text, Text)]
+defaultCommandNames =
+  [ ("help", "print all available commands")
+  , ("quit", "quit without saving")
+  , ("log", "display the status log")
+  , ("scroll-top", "scroll the viewport to the top")
+  , ("scroll-bottom", "scroll the viewport to the bottom")
+  , ("parse-forward", "step the parser forward")
+  , ("parse-backward", "step the parser backward")
+  ]
+
 mkCommandHandler :: UserCommandHandler req -> CommandHandler req
 mkCommandHandler userCommandHandler iface ref cmd = do
-  (op, ok) <- case T.words cmd of
-    [] -> pure (NextOpContinue, True)
-    ["top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True)
-    ["bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True)
-    ["quit"] -> pure (NextOpHalt, True)
-    _ -> userCommandHandler iface cmd
-  setEdMode ref EdModeNormal
+  (op, ok, mode) <- case T.words cmd of
+    [] -> pure (NextOpContinue, True, EdModeNormal)
+    ["help"] -> pure (NextOpContinue, True, EdModeHelp)
+    ["quit"] -> pure (NextOpHalt, True, EdModeNormal)
+    ["log"] -> pure (NextOpContinue, True, EdModeLog)
+    ["scroll-top"] -> editContents ref Z.gotoBOF $> (NextOpContinue, True, EdModeNormal)
+    ["scroll-bottom"] -> editContents ref Z.gotoEOF $> (NextOpContinue, True, EdModeNormal)
+    ["parse-forward"] -> undefined
+    ["parse-backward"] -> undefined
+    _ -> do
+      (op, ok) <- userCommandHandler iface cmd
+      pure (op, ok, EdModeNormal)
+  setEdMode ref mode
   unless ok (writeStatus ref ("Bad command: " <> cmd))
   pure op
 
-mkEventHandler :: CommandHandler req -> UserEventHandler req res -> EventHandler req res
-mkEventHandler commandHandler userEventHandler iface ref ev =
+sendLog :: Iface req -> Severity -> Text -> STM ()
+sendLog iface sev msg = void (ifaceSend iface (ReqBodyLog sev msg))
+
+withStateLog :: Show b => Iface req -> TVar St -> Text -> (St -> b) -> STM a -> STM a
+withStateLog iface ref name ex act = do
+  let sev = Debug
+  sendLog iface sev (name <> " - before")
+  st0 <- readTVar ref
+  let v0 = ex st0
+  sendLog iface sev (T.pack (show v0))
+  res <- act
+  sendLog iface sev (name <> " - after")
+  st1 <- readTVar ref
+  let v1 = ex st1
+  sendLog iface sev (T.pack (show v1))
+  pure res
+
+mkEventHandler :: Trie -> CommandHandler req -> UserEventHandler req res -> EventHandler req res
+mkEventHandler commandTrie commandHandler userEventHandler iface ref ev =
   case ev of
     -- Hard quit: Left option + escape, or ctrl-c
     VtyEvent (V.EvKey V.KEsc [V.MMeta]) -> pure NextOpHalt
@@ -311,6 +388,10 @@ mkEventHandler commandHandler userEventHandler iface ref ev =
             (V.KChar 'f', [V.MCtrl]) -> editCommand ref Z.moveRight $> ClearYes
             (V.KHome, []) -> editCommand ref Z.gotoBOL $> ClearYes
             (V.KEnd, []) -> editCommand ref Z.gotoEOL $> ClearYes
+            -- Tab completion
+            (V.KChar '\t', []) -> do
+              withStateLog iface ref "tab complete" stCommandCompletes $
+                tabComplete ref commandTrie $> ClearNo
             -- Editing
             (V.KDel, []) -> editCommand ref Z.deleteChar $> ClearYes
             (V.KChar 'd', [V.MCtrl]) -> editCommand ref Z.deleteChar $> ClearYes
@@ -320,6 +401,11 @@ mkEventHandler commandHandler userEventHandler iface ref ev =
               cmd <- fmap (currentLine . stCommandLine) (readTVar ref)
               fmap opToClear (commandHandler iface ref cmd)
             _ -> pure ClearNo
+        _ ->
+          -- Help and log modes - colon to command mode, otherwise to normal
+          case (key, mods) of
+            (V.KChar ':', []) -> setEdMode ref EdModeCommand $> ClearNo
+            _ -> setEdMode ref EdModeNormal $> ClearNo
       case clear of
         ClearYes -> clearStatus ref $> NextOpContinue
         ClearNo -> pure NextOpContinue
@@ -340,6 +426,7 @@ mkEventHandler commandHandler userEventHandler iface ref ev =
             ResBodyErr msg -> do
               writeStatus ref ("Error: " <> msg)
               pure NextOpContinue
+            ResBodyLog -> pure NextOpContinue
     -- Skip the rest
     _ -> pure NextOpContinue
 
@@ -397,9 +484,9 @@ myAttrMap = attrMap V.defAttr
   , (plainOffAttr, V.white `on` V.black)
   ]
 
-mkApp :: EventHandler req res -> SimpleLogAction -> BChan (Req req) -> Maybe FilePath -> App St (Res res) Name
-mkApp eventHandler action reqChan mfp = App
-  { appDraw = myDraw
+mkApp :: [(Text, Text)] -> EventHandler req res -> SimpleLogAction -> BChan (Req req) -> Maybe FilePath -> App St (Res res) Name
+mkApp commandNames eventHandler action reqChan mfp = App
+  { appDraw = myDraw commandNames
   , appChooseCursor = myChoose
   , appHandleEvent = myHandle eventHandler action reqChan
   , appStartEvent = myStart reqChan mfp
@@ -420,12 +507,15 @@ mkWorker userWorker action reqChan evChan = forever go where
           if e
             then fmap (ResBodyOpened fp) (TIO.readFile fp)
             else pure (ResBodyNotFound fp)
+        ReqBodyLog sev msg -> logWithSeverity action sev msg $> ResBodyLog
     writeBChan evChan (Res n resb)
 
 mkExe :: Show req => CustomDef req res -> IO ()
-mkExe (CustomDef userCommandHandler userEventHandler userWorker) = do
+mkExe (CustomDef userCommandNames userCommandHandler userEventHandler userWorker) = do
   let commandHandler = mkCommandHandler userCommandHandler
-  let eventHandler = mkEventHandler commandHandler userEventHandler
+      commandNames = defaultCommandNames <> userCommandNames
+      commandTrie = mkTrie (fmap fst commandNames)
+  let eventHandler = mkEventHandler commandTrie commandHandler userEventHandler
   args <- getArgs
   mfn <- case args of
     [] -> pure Nothing
@@ -438,7 +528,7 @@ mkExe (CustomDef userCommandHandler userEventHandler userWorker) = do
   let vtyBuilder = V.mkVty V.defaultConfig
   firstVty <- vtyBuilder
   fileSimpleLogAction "/tmp/buh" $ \action -> do
-    let app = mkApp eventHandler action reqChan mfn
+    let app = mkApp commandNames eventHandler action reqChan mfn
         st = mkSt maxLogLen
         runUi = customMain firstVty vtyBuilder (Just evChan) app st
         runWorker = mkWorker userWorker action reqChan evChan

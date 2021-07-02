@@ -24,6 +24,7 @@ source-repository head
 
 library
   exposed-modules:
+      Buh.Completes
       Buh.Demo
       Buh.Etc
       Buh.Interface
@@ -71,6 +72,7 @@ library
     , text
     , text-zipper
     , vty
+    , word-trie
   default-language: Haskell2010
 
 executable buh-exe
@@ -118,6 +120,7 @@ executable buh-exe
     , text
     , text-zipper
     , vty
+    , word-trie
   default-language: Haskell2010
 
 test-suite buh-test
@@ -168,4 +171,5 @@ test-suite buh-test
     , text
     , text-zipper
     , vty
+    , word-trie
   default-language: Haskell2010

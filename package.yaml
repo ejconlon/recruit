@@ -29,6 +29,7 @@ dependencies:
 - text-zipper
 # - unordered-containers
 - vty
+- word-trie
 
 default-extensions:
 - BangPatterns

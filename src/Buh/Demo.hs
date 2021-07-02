@@ -8,6 +8,7 @@ import Buh.Interface (CustomDef (..), Iface (..), NextOp (..), ReqBody (..), Res
                       UserEventHandler, UserWorker)
 import Buh.Internal (mkExe)
 import Data.Functor (($>))
+import Data.Text (Text)
 import qualified Data.Text as T
 
 data DemoReqBody =
@@ -18,6 +19,12 @@ data DemoReqBody =
 data DemoResBody =
     DemoResBodyPong
   deriving stock (Eq, Show)
+
+userCommandNames :: [(Text, Text)]
+userCommandNames =
+  [ ("ping", "test worker responses")
+  , ("boom", "test worker error handling")
+  ]
 
 userCommandHandler :: UserCommandHandler DemoReqBody
 userCommandHandler iface cmd = do
@@ -40,7 +47,7 @@ userWorker _ creq =
     DemoReqBodyBoom -> error "Boom!"
 
 customDef :: CustomDef DemoReqBody DemoResBody
-customDef = CustomDef userCommandHandler userEventHandler userWorker
+customDef = CustomDef userCommandNames userCommandHandler userEventHandler userWorker
 
 exe :: IO ()
 exe = mkExe customDef

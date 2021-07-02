@@ -2,7 +2,7 @@ module Buh.Interface where
 
 import Control.Concurrent.STM (STM)
 import Data.Text (Text)
-import LittleLogger.Manual (SimpleLogAction)
+import LittleLogger.Manual (Severity, SimpleLogAction)
 
 newtype ReqId = ReqId { unReqId :: Int }
   deriving newtype (Eq, Show, Enum, Ord, Num)
@@ -10,6 +10,7 @@ newtype ReqId = ReqId { unReqId :: Int }
 data ReqBody req =
     ReqBodyCustom !req
   | ReqBodyOpen !FilePath
+  | ReqBodyLog !Severity !Text
   deriving stock (Eq, Show)
 
 data ResBody res =
@@ -17,6 +18,7 @@ data ResBody res =
   | ResBodyOpened !FilePath !Text
   | ResBodyNotFound !FilePath
   | ResBodyErr !Text
+  | ResBodyLog
   deriving stock (Eq, Show)
 
 data NextOp = NextOpHalt | NextOpContinue
@@ -34,7 +36,8 @@ type UserEventHandler req res = Iface req -> res -> STM NextOp
 type UserWorker req res = SimpleLogAction -> req -> IO (ResBody res)
 
 data CustomDef req res = CustomDef
-  { customCommandHandler :: !(UserCommandHandler req)
+  { customCommandNames :: ![(Text, Text)]
+  , customCommandHandler :: !(UserCommandHandler req)
   , customEventHandler :: !(UserEventHandler req res)
   , customWorker :: !(UserWorker req res)
   }

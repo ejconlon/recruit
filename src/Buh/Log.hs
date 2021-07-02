@@ -1,13 +1,18 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Buh.Log
   ( Log (..)
   , newLog
   , pushLog
   , peekLog
   , markLog
+  , textLog
   ) where
 
+import Data.Foldable (toList)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
+import Data.Text (Text)
 
 -- TODO maintain seen/unseen as lists not single new flag
 data Log a = Log
@@ -21,16 +26,19 @@ newLog i = Log i Seq.empty False
 
 pushLog :: Log a -> a -> Log a
 pushLog (Log m e _) v = Log m f True where
-  f = v :<| g
+  f = g :|> v
   g = case e of
     Empty -> e
-    start :|> _ -> if Seq.length e >= m then start else e
+    _ :<| rest -> if Seq.length e >= m then rest else e
 
 peekLog :: Log a -> Maybe (a, Bool)
 peekLog (Log _ e n) =
   case e of
-    hd :<| _ -> Just (hd, n)
+    _ :|> las -> Just (las, n)
     Empty -> Nothing
 
 markLog :: Log a -> Log a
 markLog (Log m e _) = Log m e False
+
+textLog :: Log Text -> [Text]
+textLog (Log _ elems _) = toList elems
