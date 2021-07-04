@@ -30,6 +30,7 @@ library
       Buh.Interface
       Buh.Internal
       Buh.Log
+      Buh.Orphans
   other-modules:
       Paths_buh
   hs-source-dirs:
@@ -70,6 +71,7 @@ library
     , little-logger >=0.3.2 && <0.4
     , stm
     , text
+    , text-show
     , text-zipper
     , vty
     , word-trie
@@ -118,6 +120,7 @@ executable buh-exe
     , little-logger >=0.3.2 && <0.4
     , stm
     , text
+    , text-show
     , text-zipper
     , vty
     , word-trie
@@ -169,6 +172,7 @@ test-suite buh-test
     , tasty
     , tasty-hunit
     , text
+    , text-show
     , text-zipper
     , vty
     , word-trie

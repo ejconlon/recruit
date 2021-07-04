@@ -2,42 +2,66 @@ module Buh.Interface where
 
 import Control.Concurrent.STM (STM)
 import Data.Text (Text)
+import GHC.Generics (Generic)
 import LittleLogger.Manual (Severity, SimpleLogAction)
+import TextShow (TextShow)
+import TextShow.Generic (FromGeneric (..))
 
-newtype ReqId = ReqId { unReqId :: Int }
-  deriving newtype (Eq, Show, Enum, Ord, Num)
+data NextOp =
+    NextOpHalt
+  | NextOpContinue
+  deriving stock (Eq, Show, Generic)
+  deriving (TextShow) via (FromGeneric NextOp)
 
-data ReqBody req =
-    ReqBodyCustom !req
-  | ReqBodyOpen !FilePath
-  | ReqBodyLog !Severity !Text
-  deriving stock (Eq, Show)
+data CommandStatus =
+    CommandStatusOk
+  | CommandStatusError
+  deriving stock (Eq, Show, Generic)
+  deriving (TextShow) via (FromGeneric CommandStatus)
 
-data ResBody res =
-    ResBodyCustom !res
-  | ResBodyOpened !FilePath !Text
-  | ResBodyNotFound !FilePath
-  | ResBodyErr !Text
-  | ResBodyLog
-  deriving stock (Eq, Show)
+newtype Pos = Pos { unPos :: Int }
+  deriving stock (Generic)
+  deriving newtype (Eq, Show, Ord, Enum)
+  deriving (TextShow) via (FromGeneric Pos)
 
-data NextOp = NextOpHalt | NextOpContinue
-  deriving (Eq, Show)
+data Span = Span
+  { spanStart :: !Pos
+  , spanEnd :: !Pos
+  } deriving stock (Eq, Show, Generic)
+    deriving (TextShow) via (FromGeneric Span)
 
-data Iface req = Iface
-  { ifaceSend :: !(ReqBody req -> STM ReqId)
+data Result err ctx req =
+    ResultEmpty
+  | ResultForward !Pos !ctx !(Maybe req)
+  | ResultError !Span !err
+  deriving stock (Eq, Show, Generic)
+  deriving (TextShow) via (FromGeneric (Result err ctx req))
+
+data Iface ctx req = Iface
+  { ifaceSendReq :: !(req -> STM ())
+  , ifaceSendLog :: !(Severity -> Text -> STM ())
   , ifaceWriteStatus :: !(Text -> STM ())
+  , ifaceGetCtx :: !(STM ctx)
+  , ifacePutCtx :: !(ctx -> STM ())
   }
 
-type UserCommandHandler req = Iface req -> Text -> STM (NextOp, Bool)
+type CommandNames = [(Text, Text)]
 
-type UserEventHandler req res = Iface req -> res -> STM NextOp
+type UserCommandHandler ctx req = Iface ctx req -> Text -> STM (NextOp, CommandStatus)
 
-type UserWorker req res = SimpleLogAction -> req -> IO (ResBody res)
+type UserEventHandler ctx req res = Iface ctx req -> res -> STM NextOp
 
-data CustomDef req res = CustomDef
-  { customCommandNames :: ![(Text, Text)]
-  , customCommandHandler :: !(UserCommandHandler req)
-  , customEventHandler :: !(UserEventHandler req res)
-  , customWorker :: !(UserWorker req res)
+type UserWorker err req res = SimpleLogAction -> req -> IO (Either err res)
+
+type UserParser err ctx req = ctx -> Text -> Result err ctx req
+
+data CustomDef err ctx req res = CustomDef
+  { customCommandNames :: !CommandNames
+  , customCommandHandler :: !(UserCommandHandler ctx req)
+  , customEventHandler :: !(UserEventHandler ctx req res)
+  , customWorker :: !(UserWorker err req res)
+  , customParser :: !(UserParser err ctx req)
+  , customEmptyCtx :: !ctx
   }
+
+type CustomConstraints err ctx req res = (TextShow err, TextShow req)

@@ -8,12 +8,16 @@ module Buh.Completes
   , advanceCompletes
   ) where
 
+import Buh.Orphans ()
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Trie (Trie)
 import qualified Data.Trie as Trie
+import GHC.Generics (Generic)
+import TextShow (TextShow)
+import TextShow.Generic (FromGeneric (..))
 
 mkTrie :: [Text] -> Trie
 mkTrie = Trie.fromList . fmap T.unpack
@@ -22,7 +26,8 @@ data Completes = Completes
   { compQuery :: !Text
   , compMatches :: !(Seq Text)
   , compIndex :: !(Maybe Int)
-  } deriving stock (Eq, Show)
+  } deriving stock (Eq, Show, Generic)
+    deriving (TextShow) via (FromGeneric Completes)
 
 mkCompletes :: Trie -> Text -> Completes
 mkCompletes trie query =

@@ -9,17 +9,22 @@ module Buh.Log
   , textLog
   ) where
 
+import Buh.Orphans ()
 import Data.Foldable (toList)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
+import GHC.Generics (Generic)
+import TextShow (TextShow)
+import TextShow.Generic (FromGeneric (..))
 
 -- TODO maintain seen/unseen as lists not single new flag
 data Log a = Log
   { logMax :: !Int
   , logElems :: !(Seq a)
   , logNew :: !Bool
-  } deriving stock (Eq, Show, Functor, Foldable, Traversable)
+  } deriving stock (Eq, Show, Generic, Functor, Foldable, Traversable)
+    deriving (TextShow) via (FromGeneric (Log a))
 
 newLog :: Int -> Log a
 newLog i = Log i Seq.empty False

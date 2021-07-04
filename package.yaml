@@ -26,6 +26,7 @@ dependencies:
 - stm
 - text
 # - text-builder
+- text-show
 - text-zipper
 # - unordered-containers
 - vty
