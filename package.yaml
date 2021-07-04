@@ -23,6 +23,7 @@ dependencies:
 - little-logger >= 0.3.2 && < 0.4
 # - hashable
 # - microlens
+- random
 - stm
 - text
 # - text-builder

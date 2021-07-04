@@ -45,6 +45,11 @@ data Iface ctx req = Iface
   , ifacePutCtx :: !(ctx -> STM ())
   }
 
+ifaceModifyCtx :: Iface ctx req -> (ctx -> ctx) -> STM ()
+ifaceModifyCtx iface f = do
+  ctx <- ifaceGetCtx iface
+  ifacePutCtx iface (f ctx)
+
 type CommandNames = [(Text, Text)]
 
 type UserCommandHandler ctx req = Iface ctx req -> Text -> STM (NextOp, CommandStatus)
