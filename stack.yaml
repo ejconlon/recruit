@@ -1,4 +1,4 @@
-resolver: lts-17.15
+resolver: lts-18.2
 
 ghc-options:
   "$everything": -haddock
@@ -6,6 +6,9 @@ ghc-options:
 packages:
 - .
 
+allow-newer: true
+
 extra-deps:
+- co-log-0.4.0.1
 - little-logger-0.3.2
 - simple-parser-0.5.0

@@ -5,6 +5,13 @@
 
 packages:
 - completed:
+    hackage: co-log-0.4.0.1@sha256:3d4c17f37693c80d1aa2c41669bc3438fac3e89dc5f479e57d79bc3ddc4dfcc5,5087
+    pantry-tree:
+      size: 1126
+      sha256: e73165ff8f744709428e2e87984c9d60ca1cec43d8455c413181c7c466e7497c
+  original:
+    hackage: co-log-0.4.0.1
+- completed:
     hackage: little-logger-0.3.2@sha256:d43c8bd581a267061bbff9a1ca4edbe5ea10a985b92140e653f5259621171ba3,2184
     pantry-tree:
       size: 518
@@ -20,7 +27,7 @@ packages:
     hackage: simple-parser-0.5.0
 snapshots:
 - completed:
-    size: 567679
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/15.yaml
-    sha256: 72e87841a0ab5b72f6f018e8ee692fd972b7bb32a944990f028e10d6eb528e63
-  original: lts-17.15
+    size: 585392
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/2.yaml
+    sha256: 7abb45c0cc5eb349448b66d8753655542d45d387ad26970419282eab3d860724
+  original: lts-18.2
