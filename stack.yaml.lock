@@ -11,6 +11,13 @@ packages:
       sha256: 9348cf53abb66ed580bccd9b1a2fbda14ee39b7041e1a4a7b77bb3463dc4e3b1
   original:
     hackage: little-logger-0.3.2
+- completed:
+    hackage: simple-parser-0.5.0@sha256:fb61fea0d08632aebf4da8937f1d1f17e84d6b52432096cd4034209546356072,3095
+    pantry-tree:
+      size: 1075
+      sha256: d2e1be8d6ebbbb37280312b5f32203b70d235cb18d4513d6bc1e4ab4698d7805
+  original:
+    hackage: simple-parser-0.5.0
 snapshots:
 - completed:
     size: 567679

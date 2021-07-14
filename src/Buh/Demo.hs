@@ -16,6 +16,8 @@ import GHC.Generics (Generic)
 import System.Random (StdGen, mkStdGen, randomR)
 import TextShow (TextShow (..))
 import TextShow.Generic (FromGeneric (..))
+import SimpleParser (TextLabel, Parser, runParser, ParseResult (..), Offset(Offset), ParseSuccess(..), OffsetStream (..), ErrorExplanation, newOffsetStream, parseErrorNarrowestSpan)
+import Data.Sequence.NonEmpty (NESeq (..))
 
 data DemoReqBody =
     DemoReqBodyPing
@@ -31,7 +33,9 @@ data DemoResBody =
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric DemoResBody)
 
-data DemoErr = DemoErr
+data DemoErr =
+    DemoErrCmd
+  | DemoErrParse !ErrorExplanation
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric DemoErr)
 
@@ -70,14 +74,35 @@ mkWorker :: IORef StdGen -> UserWorker DemoErr DemoReqBody DemoResBody
 mkWorker ioGen _ creq =
   case creq of
     DemoReqBodyPing -> pure (Right DemoResBodyPong)
-    DemoReqBodyErr -> pure (Left DemoErr)
+    DemoReqBodyErr -> pure (Left DemoErrCmd)
     DemoReqBodyExc -> error "Boom!"
     DemoReqBodyRand -> do
       j <- atomicModifyIORef' ioGen (swap . randomR (-1, 1))
       pure (Right (DemoResBodyRand j))
 
+data Directive =
+    DirectiveInc
+  | DirectiveDec
+  | DirectiveRand
+  | DirectivePrint
+  deriving stock (Eq, Show, Generic)
+  deriving (TextShow) via (FromGeneric Directive)
+
+type P a = Parser TextLabel (OffsetStream Text) Text a
+
+parseTxt :: P Directive
+parseTxt = undefined
+
 parser :: UserParser DemoErr DemoCtx DemoReqBody
-parser ctx@(DemoCtx i) txt = ResultEmpty
+parser ctx@(DemoCtx i) txt =
+  case runParser parseTxt (newOffsetStream txt) of
+    Nothing -> ResultEmpty
+    Just (ParseResultError (perr :<|| _)) ->
+      -- Just take the first error
+      let (_, espan) = parseErrorNarrowestSpan perr
+      in undefined
+    Just (ParseResultSuccess (ParseSuccess (OffsetStream (Offset o) _) dir)) ->
+      undefined
 
 mkCustomDef :: IORef StdGen -> CustomDef DemoErr DemoCtx DemoReqBody DemoResBody
 mkCustomDef ioGen =

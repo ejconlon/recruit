@@ -69,7 +69,9 @@ library
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , nonempty-containers
     , random
+    , simple-parser >=0.5.0 && <0.6
     , stm
     , text
     , text-show
@@ -119,7 +121,9 @@ executable buh-exe
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , nonempty-containers
     , random
+    , simple-parser >=0.5.0 && <0.6
     , stm
     , text
     , text-show
@@ -170,7 +174,9 @@ test-suite buh-test
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
+    , nonempty-containers
     , random
+    , simple-parser >=0.5.0 && <0.6
     , stm
     , tasty
     , tasty-hunit

@@ -5,10 +5,17 @@ module Buh.Orphans where
 import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import Data.Text.Zipper (TextZipper)
+import GHC.Generics (Generic)
 import LittleLogger.Manual (Severity)
+import SimpleParser (ErrorExplanation (..))
 import TextShow (Builder, FromStringShow (..), TextShow (..), TextShow1 (..), showbPrec1, showbUnaryWith)
+import TextShow.Generic (FromGeneric (..))
+
+deriving stock instance Generic ErrorExplanation
+deriving via FromGeneric ErrorExplanation instance TextShow ErrorExplanation
 
 deriving via FromStringShow Severity instance TextShow Severity
+
 deriving via FromStringShow (TextZipper a) instance (Show a) => TextShow (TextZipper a)
 
 -- The following are from text-show-instances:

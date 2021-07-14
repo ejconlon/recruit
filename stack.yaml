@@ -8,3 +8,4 @@ packages:
 
 extra-deps:
 - little-logger-0.3.2
+- simple-parser-0.5.0
