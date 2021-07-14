@@ -581,7 +581,7 @@ mkExe (CustomDef userCommandNames userCommandHandler userEventHandler userWorker
   evChan <- newBChan maxChanLen
   let vtyBuilder = V.mkVty V.defaultConfig
   firstVty <- vtyBuilder
-  fileSimpleLogAction "/tmp/buh" $ \action -> do
+  fileSimpleLogAction "/tmp/recruit.log" $ \action -> do
     let app = mkApp commandNames eventHandler action reqChan mfn
         st = mkSt emptyCtx maxLogLen
         runUi = customMain firstVty vtyBuilder (Just evChan) app st
