@@ -1,4 +1,4 @@
-module Buh.Interface where
+module Recruit.Interface where
 
 import Control.Concurrent.STM (STM)
 import Data.Text (Text)

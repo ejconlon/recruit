@@ -1,13 +1,13 @@
 cradle:
   stack:
     - path: "./src"
-      component: "buh:lib"
+      component: "recruit:lib"
 
     - path: "./exe/Main.hs"
-      component: "buh:exe:buh-exe"
+      component: "recruit:exe:recruit-exe"
 
-    - path: "./exe/Paths_buh.hs"
-      component: "buh:exe:buh-exe"
+    - path: "./exe/Paths_recruit.hs"
+      component: "recruit:exe:recruit-exe"
 
     - path: "./test"
-      component: "buh:test:buh-test"
+      component: "recruit:test:recruit-test"

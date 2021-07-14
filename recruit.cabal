@@ -4,11 +4,11 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 
-name:           buh
+name:           recruit
 version:        0.1.0
-description:    Please see the README on GitHub at <https://github.com/ejconlon/buh#readme>
-homepage:       https://github.com/ejconlon/buh#readme
-bug-reports:    https://github.com/ejconlon/buh/issues
+description:    Please see the README on GitHub at <https://github.com/ejconlon/recruit#readme>
+homepage:       https://github.com/ejconlon/recruit#readme
+bug-reports:    https://github.com/ejconlon/recruit/issues
 author:         Eric Conlon
 maintainer:     ejconlon@gmail.com
 copyright:      (c) 2021 Eric Conlon
@@ -20,19 +20,19 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/ejconlon/buh
+  location: https://github.com/ejconlon/recruit
 
 library
   exposed-modules:
-      Buh.Completes
-      Buh.Demo
-      Buh.Etc
-      Buh.Interface
-      Buh.Internal
-      Buh.Log
-      Buh.Orphans
+      Recruit.Completes
+      Recruit.Demo
+      Recruit.Etc
+      Recruit.Interface
+      Recruit.Internal
+      Recruit.Log
+      Recruit.Orphans
   other-modules:
-      Paths_buh
+      Paths_recruit
   hs-source-dirs:
       src
   default-extensions:
@@ -80,10 +80,10 @@ library
     , word-trie
   default-language: Haskell2010
 
-executable buh-exe
+executable recruit-exe
   main-is: Main.hs
   other-modules:
-      Paths_buh
+      Paths_recruit
   hs-source-dirs:
       exe
   default-extensions:
@@ -117,12 +117,12 @@ executable buh-exe
       async
     , base >=4.12 && <5
     , brick
-    , buh
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
     , nonempty-containers
     , random
+    , recruit
     , simple-parser >=0.5.0 && <0.6
     , stm
     , text
@@ -132,11 +132,11 @@ executable buh-exe
     , word-trie
   default-language: Haskell2010
 
-test-suite buh-test
+test-suite recruit-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-      Paths_buh
+      Paths_recruit
   hs-source-dirs:
       test
   default-extensions:
@@ -170,12 +170,12 @@ test-suite buh-test
       async
     , base >=4.12 && <5
     , brick
-    , buh
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
     , nonempty-containers
     , random
+    , recruit
     , simple-parser >=0.5.0 && <0.6
     , stm
     , tasty

@@ -6,7 +6,7 @@ https://github.com/jtdaugherty/brick/blob/master/programs/CustomEventDemo.hs
 https://github.com/NorfairKing/writing-a-text-editor-in-haskell-with-brick
 https://hackage.haskell.org/package/brick-0.62/docs/Brick-Main.html#t:App
 -}
-module Buh.Internal (mkExe) where
+module Recruit.Internal (mkExe) where
 
 import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, EventM, Location (..), Next,
               ViewportType (..), Widget, attrMap, continue, customMain, getVtyHandle, hBox, halt, showCursor,
@@ -14,10 +14,6 @@ import Brick (App (..), AttrMap, AttrName, BrickEvent (..), CursorLocation, Even
 import Brick.BChan (BChan, newBChan, readBChan, writeBChan)
 import Brick.Util (on)
 import Brick.Widgets.Border (hBorder)
-import Buh.Completes (Completes, Trie, advanceCompletes, mkCompletes, mkEmptyCompletes, mkTrie, readCompletes)
-import Buh.Interface (CommandNames, CommandStatus (CommandStatusOk), CustomConstraints, CustomDef (..), Iface (..),
-                      NextOp (..), UserCommandHandler, UserEventHandler, UserWorker)
-import Buh.Log (Log, markLog, newLog, peekLog, pushLog, textLog)
 import Control.Concurrent.Async (race)
 import Control.Concurrent.STM (STM, atomically)
 import Control.Concurrent.STM.TQueue (TQueue, flushTQueue, newTQueueIO, writeTQueue)
@@ -36,6 +32,10 @@ import qualified Data.Text.Zipper as Z
 import GHC.Generics (Generic)
 import qualified Graphics.Vty as V
 import LittleLogger.Manual (Severity (Debug), SimpleLogAction, fileSimpleLogAction, logDebug, logWithSeverity)
+import Recruit.Completes (Completes, Trie, advanceCompletes, mkCompletes, mkEmptyCompletes, mkTrie, readCompletes)
+import Recruit.Interface (CommandNames, CommandStatus (CommandStatusOk), CustomConstraints, CustomDef (..), Iface (..),
+                          NextOp (..), UserCommandHandler, UserEventHandler, UserWorker)
+import Recruit.Log (Log, markLog, newLog, peekLog, pushLog, textLog)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (die)

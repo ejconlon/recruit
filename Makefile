@@ -2,8 +2,8 @@ include Makefile.base
 
 .PHONY: exe
 exe: build
-	stack exec -- buh-exe
+	stack exec -- recruit-exe
 
 .PHONY: demo
 demo: build
-	stack exec buh-exe -- package.yaml
+	stack exec recruit-exe -- package.yaml

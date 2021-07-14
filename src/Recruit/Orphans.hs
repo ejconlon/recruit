@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Buh.Orphans where
+module Recruit.Orphans where
 
 import Data.Foldable (toList)
 import Data.Sequence (Seq)

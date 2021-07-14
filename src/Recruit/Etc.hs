@@ -1,4 +1,4 @@
-module Buh.Etc
+module Recruit.Etc
   (
   ) where
 

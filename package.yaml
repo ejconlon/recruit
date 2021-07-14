@@ -1,6 +1,6 @@
-name:                buh
+name:                recruit
 version:             0.1.0
-github:              "ejconlon/buh"
+github:              "ejconlon/recruit"
 license:             BSD3
 author:              "Eric Conlon"
 maintainer:          "ejconlon@gmail.com"
@@ -11,7 +11,7 @@ copyright:           "(c) 2021 Eric Conlon"
 extra-source-files:
 - README.md
 
-description: Please see the README on GitHub at <https://github.com/ejconlon/buh#readme>
+description: Please see the README on GitHub at <https://github.com/ejconlon/recruit#readme>
 
 dependencies:
 - base >= 4.12 && < 5
@@ -78,7 +78,7 @@ library:
   source-dirs: src
 
 executables:
-  buh-exe:
+  recruit-exe:
     main:                Main.hs
     source-dirs:         exe
     ghc-options:
@@ -86,10 +86,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - buh
+    - recruit
 
 tests:
-  buh-test:
+  recruit-test:
     main:                Main.hs
     source-dirs:         test
     ghc-options:
@@ -97,6 +97,6 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - buh
+    - recruit
     - tasty
     - tasty-hunit

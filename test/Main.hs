@@ -10,4 +10,4 @@ testSimple = testCase "simple" $ do
     actual @?= expected
 
 main :: IO ()
-main = defaultMain (testGroup "Buh" [testSimple])
+main = defaultMain (testGroup "recruit" [testSimple])

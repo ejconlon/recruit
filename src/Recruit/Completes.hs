@@ -1,4 +1,4 @@
-module Buh.Completes
+module Recruit.Completes
   ( Trie
   , mkTrie
   , Completes
@@ -8,7 +8,6 @@ module Buh.Completes
   , advanceCompletes
   ) where
 
-import Buh.Orphans ()
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
@@ -16,6 +15,7 @@ import qualified Data.Text as T
 import Data.Trie (Trie)
 import qualified Data.Trie as Trie
 import GHC.Generics (Generic)
+import Recruit.Orphans ()
 import TextShow (TextShow)
 import TextShow.Generic (FromGeneric (..))
 

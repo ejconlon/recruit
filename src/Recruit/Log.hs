@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Buh.Log
+module Recruit.Log
   ( Log (..)
   , newLog
   , pushLog
@@ -9,12 +9,12 @@ module Buh.Log
   , textLog
   ) where
 
-import Buh.Orphans ()
 import Data.Foldable (toList)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Recruit.Orphans ()
 import TextShow (TextShow)
 import TextShow.Generic (FromGeneric (..))
 

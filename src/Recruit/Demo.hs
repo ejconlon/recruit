@@ -1,23 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Buh.Demo
+module Recruit.Demo
   ( exe
   ) where
 
-import Buh.Interface (CommandStatus (..), CustomDef (..), Iface (..), NextOp (..), Result (..), UserCommandHandler,
-                      UserEventHandler, UserParser, UserWorker, ifaceModifyCtx)
-import Buh.Internal (mkExe)
 import Data.Functor (($>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.Sequence.NonEmpty (NESeq (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Tuple (swap)
 import GHC.Generics (Generic)
+import Recruit.Interface (CommandStatus (..), CustomDef (..), Iface (..), NextOp (..), Result (..), UserCommandHandler,
+                          UserEventHandler, UserParser, UserWorker, ifaceModifyCtx)
+import Recruit.Internal (mkExe)
+import SimpleParser (ErrorExplanation, Offset (Offset), OffsetStream (..), ParseResult (..), ParseSuccess (..), Parser,
+                     TextLabel, newOffsetStream, parseErrorNarrowestSpan, runParser)
 import System.Random (StdGen, mkStdGen, randomR)
 import TextShow (TextShow (..))
 import TextShow.Generic (FromGeneric (..))
-import SimpleParser (TextLabel, Parser, runParser, ParseResult (..), Offset(Offset), ParseSuccess(..), OffsetStream (..), ErrorExplanation, newOffsetStream, parseErrorNarrowestSpan)
-import Data.Sequence.NonEmpty (NESeq (..))
 
 data DemoReqBody =
     DemoReqBodyPing

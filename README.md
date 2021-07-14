@@ -1,3 +1,3 @@
-# buh
+# recruit
 
 A simple text editor for embedding interactive proof assistants.

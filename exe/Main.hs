@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Buh.Demo (exe)
+import Recruit.Demo (exe)
 
 main :: IO ()
 main = exe
