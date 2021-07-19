@@ -23,9 +23,10 @@ dependencies:
 - little-logger >= 0.3.2 && < 0.4
 # - hashable
 # - microlens
-- nonempty-containers
+- mtl
+# - nonempty-containers
 - random
-- simple-parser >= 0.5.0 && < 0.6
+- simple-parser >= 0.7.0 && < 0.8
 - stm
 - text
 # - text-builder

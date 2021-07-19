@@ -34,6 +34,7 @@ data Result err ctx req =
     ResultEmpty
   | ResultForward !Pos !ctx !(Maybe req)
   | ResultError !Span !err
+  | ResultFail !Text
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric (Result err ctx req))
 

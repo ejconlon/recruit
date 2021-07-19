@@ -31,6 +31,7 @@ library
       Recruit.Internal
       Recruit.Log
       Recruit.Orphans
+      Recruit.Parser
   other-modules:
       Paths_recruit
   hs-source-dirs:
@@ -69,9 +70,9 @@ library
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
-    , nonempty-containers
+    , mtl
     , random
-    , simple-parser >=0.5.0 && <0.6
+    , simple-parser >=0.7.0 && <0.8
     , stm
     , text
     , text-show
@@ -120,10 +121,10 @@ executable recruit-exe
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
-    , nonempty-containers
+    , mtl
     , random
     , recruit
-    , simple-parser >=0.5.0 && <0.6
+    , simple-parser >=0.7.0 && <0.8
     , stm
     , text
     , text-show
@@ -173,10 +174,10 @@ test-suite recruit-test
     , containers
     , directory
     , little-logger >=0.3.2 && <0.4
-    , nonempty-containers
+    , mtl
     , random
     , recruit
-    , simple-parser >=0.5.0 && <0.6
+    , simple-parser >=0.7.0 && <0.8
     , stm
     , tasty
     , tasty-hunit

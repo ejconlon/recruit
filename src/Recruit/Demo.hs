@@ -4,18 +4,19 @@ module Recruit.Demo
   ( exe
   ) where
 
+import Control.Monad.State.Strict (lift, modify')
 import Data.Functor (($>))
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
-import Data.Sequence.NonEmpty (NESeq (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Tuple (swap)
+import Data.Void (Void)
 import GHC.Generics (Generic)
-import Recruit.Interface (CommandStatus (..), CustomDef (..), Iface (..), NextOp (..), Result (..), UserCommandHandler,
+import Recruit.Interface (CommandStatus (..), CustomDef (..), Iface (..), NextOp (..), UserCommandHandler,
                           UserEventHandler, UserParser, UserWorker, ifaceModifyCtx)
 import Recruit.Internal (mkExe)
-import SimpleParser (ErrorExplanation, Offset (Offset), OffsetStream (..), ParseResult (..), ParseSuccess (..), Parser,
-                     TextLabel, newOffsetStream, parseErrorNarrowestSpan, runParser)
+import Recruit.Parser (ParseError, mkUserParser)
+import qualified SimpleParser as SP
 import System.Random (StdGen, mkStdGen, randomR)
 import TextShow (TextShow (..))
 import TextShow.Generic (FromGeneric (..))
@@ -25,18 +26,20 @@ data DemoReqBody =
   | DemoReqBodyErr
   | DemoReqBodyExc
   | DemoReqBodyRand
+  | DemoReqBodyPrint
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric DemoReqBody)
 
 data DemoResBody =
     DemoResBodyPong
   | DemoResBodyRand !Int
+  | DemoResBodyPrint
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric DemoResBody)
 
 data DemoErr =
     DemoErrCmd
-  | DemoErrParse !ErrorExplanation
+  | DemoErrParse !(ParseError SP.TextLabel Void)
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric DemoErr)
 
@@ -50,6 +53,7 @@ commandNames =
   [ ("ping", "test worker responses")
   , ("err", "test worker error handling")
   , ("exc", "test worker exception handling")
+  , ("print", "print worker state")
   ]
 
 commandHandler :: UserCommandHandler DemoCtx DemoReqBody
@@ -58,6 +62,7 @@ commandHandler iface cmd = do
     ["ping"] -> ifaceSendReq iface DemoReqBodyPing $> (NextOpContinue, CommandStatusOk)
     ["err"] -> ifaceSendReq iface DemoReqBodyErr $> (NextOpContinue, CommandStatusOk)
     ["exc"] -> ifaceSendReq iface DemoReqBodyExc $> (NextOpContinue, CommandStatusOk)
+    ["print"] -> ifaceSendReq iface DemoReqBodyPrint $> (NextOpContinue, CommandStatusOk)
     _ -> pure (NextOpContinue, CommandStatusError)
 
 eventHandler :: UserEventHandler DemoCtx DemoReqBody DemoResBody
@@ -70,6 +75,10 @@ eventHandler iface cres =
       ifaceWriteStatus iface ("Rand " <> showt j)
       ifaceModifyCtx iface (\(DemoCtx i) -> DemoCtx (i + j))
       pure NextOpContinue
+    DemoResBodyPrint -> do
+      DemoCtx n <- ifaceGetCtx iface
+      ifaceWriteStatus iface ("Value " <> showt n)
+      pure NextOpContinue
 
 mkWorker :: IORef StdGen -> UserWorker DemoErr DemoReqBody DemoResBody
 mkWorker ioGen _ creq =
@@ -80,6 +89,7 @@ mkWorker ioGen _ creq =
     DemoReqBodyRand -> do
       j <- atomicModifyIORef' ioGen (swap . randomR (-1, 1))
       pure (Right (DemoResBodyRand j))
+    DemoReqBodyPrint -> pure (Right DemoResBodyPrint)
 
 data Directive =
     DirectiveInc
@@ -89,21 +99,26 @@ data Directive =
   deriving stock (Eq, Show, Generic)
   deriving (TextShow) via (FromGeneric Directive)
 
-type P a = Parser TextLabel (OffsetStream Text) Text a
-
-parseTxt :: P Directive
-parseTxt = undefined
-
 parser :: UserParser DemoErr DemoCtx DemoReqBody
-parser ctx@(DemoCtx i) txt =
-  case runParser parseTxt (newOffsetStream txt) of
-    Nothing -> ResultEmpty
-    Just (ParseResultError (perr :<|| _)) ->
-      -- Just take the first error
-      let (_, espan) = parseErrorNarrowestSpan perr
-      in undefined
-    Just (ParseResultSuccess (ParseSuccess (OffsetStream (Offset o) _) dir)) ->
-      undefined
+parser = mkUserParser DemoErrParse $ do
+  SP.spaceParser
+  dir <- SP.lookAheadSimple SP.anyToken (fail "failed to match directive")
+    [ ('i', SP.matchChunk "inc" $> DirectiveInc)
+    , ('d', SP.matchChunk "dec" $> DirectiveDec)
+    , ('r', SP.matchChunk "rand" $> DirectiveRand)
+    , ('p', SP.matchChunk "print" $> DirectiveRand)
+    ]
+  SP.spaceParser
+  _ <- SP.matchToken '.'
+  case dir of
+    DirectiveInc -> do
+      lift (modify' (\(DemoCtx n) -> DemoCtx (n + 1)))
+      pure Nothing
+    DirectiveDec -> do
+      lift (modify' (\(DemoCtx n) -> DemoCtx (n - 1)))
+      pure Nothing
+    DirectiveRand -> pure (Just DemoReqBodyRand)
+    DirectivePrint -> pure (Just DemoReqBodyPrint)
 
 mkCustomDef :: IORef StdGen -> CustomDef DemoErr DemoCtx DemoReqBody DemoResBody
 mkCustomDef ioGen =
